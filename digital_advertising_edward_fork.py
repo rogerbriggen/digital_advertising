@@ -778,6 +778,11 @@ def main():
     """Main function to run the training and evaluation pipeline."""
     import time
     
+    # Initialize variables that will be returned
+    policy = None
+    training_metrics = None
+    eval_results = None
+    
     # Create output directory with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = f"ad_optimization_results_{timestamp}"
@@ -872,6 +877,7 @@ def main():
         print(f"Error during training or visualization: {e}")
         import traceback
         traceback.print_exc()
+        training_metrics = {"error": str(e)}  # Create a placeholder
     
     # Evaluate agent
     print("\nEvaluating trained agent...")
@@ -914,20 +920,23 @@ def main():
         print(f"Error during evaluation: {e}")
         import traceback
         traceback.print_exc()
+        eval_results = {"error": str(e)}  # Create a placeholder instead of leaving it unassigned
     
     # Save model
     try:
-        model_path = f"{run_dir}/ad_optimization_model.pt"
-        torch.save({
-            'model_state_dict': policy.state_dict(),
-            'feature_columns': feature_columns,
-            'training_metrics': training_metrics
-        }, model_path)
-        print(f"Model saved to {model_path}")
+        if training_metrics and not isinstance(training_metrics, dict) or not training_metrics.get("error"):
+            model_path = f"{run_dir}/ad_optimization_model.pt"
+            torch.save({
+                'model_state_dict': policy.state_dict(),
+                'feature_columns': feature_columns,
+                'training_metrics': training_metrics
+            }, model_path)
+            print(f"Model saved to {model_path}")
     except Exception as e:
         print(f"Error saving model: {e}")
     
     print(f"\nPipeline completed successfully. All results saved to {run_dir}")
+    # Return values (even if some are None or error placeholders)
     return policy, training_metrics, eval_results
 
 if __name__ == "__main__":
