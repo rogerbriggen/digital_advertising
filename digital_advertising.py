@@ -104,6 +104,36 @@ dataset = pd.read_csv('data/organized_dataset.csv')
 dataset.head()
 '''
 
+def split_dataset_by_ratio(dataset, train_ratio=0.8):
+    """
+    Splits the dataset into training and test sets based on keywords.
+    
+    Args:
+        dataset (pd.DataFrame): The dataset to split.
+        train_ratio (float): Ratio of keywords to include in the training set (0.0-1.0).
+        
+    Returns:
+        tuple: (training_dataset, test_dataset)
+    """
+    # Get all unique keywords
+    keywords = dataset['keyword'].unique()
+    
+    # Fetch the amount of rows for each keyword
+    entries_in_dataset = len(dataset) / keywords.size
+    
+    # Split rows into training and test sets
+    rows_training = round((len(dataset) * train_ratio) / keywords.size) * keywords.size # Round to the nearest multiple of the number of keywords
+    rows_test = int(len(dataset) - rows_training)
+
+    # Create training and test datasets
+    train_dataset = dataset.iloc[0:rows_training].reset_index(drop=True)
+    test_dataset = dataset.iloc[rows_training:].reset_index(drop=True)
+    
+    print(f"Training dataset: {len(train_dataset)} rows, {len(train_dataset['keyword'].unique())} keywords")
+    print(f"Test dataset: {len(test_dataset)} rows, {len(test_dataset['keyword'].unique())} keywords")
+    
+    return train_dataset, test_dataset
+
 
 def get_entry_from_dataset(df, index):
     """
@@ -444,9 +474,12 @@ feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organ
 
 # Load the organized dataset
 dataset = pd.read_csv('data/organized_dataset.csv')
+# We split it into training and test data
+dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+
 
 # Initialize Environment
-env = AdOptimizationEnv(dataset, device=device)
+env = AdOptimizationEnv(dataset_training, device=device)
 state_dim = env.num_features
 
 # Define data and dimensions
