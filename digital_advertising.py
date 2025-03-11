@@ -58,10 +58,13 @@ def generate_synthetic_data(num_samples=1000):
     }
     return pd.DataFrame(data)
 
+# Example
+'''
 test = generate_synthetic_data(10)
 test.head()
 print(test.shape)
 print(test.columns)
+'''
 
 
 # Load synthetic dataset
@@ -102,7 +105,7 @@ def read_and_organize_csv(file_path):
 
 # Example usage
 dataset = pd.read_csv('data/organized_dataset.csv')
-dataset.head()
+#dataset.head()
 
 
 def get_entry_from_dataset(df, index):
@@ -137,11 +140,13 @@ def get_entry_from_dataset(df, index):
     return df.iloc[index * keywords_amount:index * keywords_amount + keywords_amount].reset_index(drop=True)
 
 # Example usage
+'''
 entry = get_entry_from_dataset(dataset, 0)
 print(entry)
 
 entry = get_entry_from_dataset(dataset, 1)
 print(entry)
+'''
 
 
 # Define a Custom TorchRL Environment
@@ -432,12 +437,6 @@ class FlattenInputs(nn.Module):
         return combined
 
 
-flatten_module = TensorDictModule(
-    FlattenInputs(),
-    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
-    out_keys=["flattened_input"]
-)
-
 
 
 # Define dimensions
@@ -447,10 +446,16 @@ action_dim = env.action_spec.shape[-1]
 total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features + cash + holdings
 
 value_mlp = MLP(in_features=total_input_dim, out_features=action_dim, num_cells=[128, 64])
+
+flatten_module = TensorDictModule(
+    FlattenInputs(),
+    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
+    out_keys=["flattened_input"]
+)
 #value_net = TensorDictModule(value_mlp, in_keys=["observation"], out_keys=["action_value"])
 value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
 policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
-#policy = TensorDictSequential(value_net, MultiStockQValueNet(len(feature_columns), env.num_keywords, 2))
+
 # Make sure your policy is on the correct device
 policy = policy.to(device)
 
