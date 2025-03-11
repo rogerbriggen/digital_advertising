@@ -387,6 +387,7 @@ class FlattenInputs(nn.Module):
         return combined
 
 # Visualization functions
+# Fix for the visualize_training_progress function
 def visualize_training_progress(metrics, output_dir="plots", window_size=20):
     """Visualize training metrics including rewards, losses, and exploration rate."""
     os.makedirs(output_dir, exist_ok=True)
@@ -394,6 +395,14 @@ def visualize_training_progress(metrics, output_dir="plots", window_size=20):
     rewards = metrics["rewards"]
     losses = metrics["losses"]
     epsilons = metrics["epsilon_values"]
+    
+    # Ensure tensors are converted to CPU NumPy arrays
+    if isinstance(rewards, torch.Tensor):
+        rewards = rewards.cpu().numpy()
+    if isinstance(losses, torch.Tensor):
+        losses = losses.cpu().numpy()
+    if isinstance(epsilons, torch.Tensor):
+        epsilons = epsilons.cpu().numpy()
     
     if not rewards:
         print("No rewards to visualize")
@@ -457,32 +466,45 @@ def visualize_evaluation(eval_results, feature_columns, output_dir="plots"):
     """Visualize the evaluation results."""
     os.makedirs(output_dir, exist_ok=True)
     
+    # Convert any tensors to numpy arrays
+    action_counts = eval_results["action_counts"]
+    rewards = eval_results["rewards"]
+    feature_importance = eval_results["feature_importance"]
+    
+    # Check and convert tensors
+    if isinstance(action_counts, torch.Tensor):
+        action_counts = action_counts.cpu().numpy()
+    if isinstance(rewards, torch.Tensor):
+        rewards = rewards.cpu().numpy()
+    if isinstance(feature_importance, torch.Tensor):
+        feature_importance = feature_importance.cpu().numpy()
+    
     # Create a figure with 2x2 subplots
     fig, axs = plt.subplots(2, 2, figsize=(15, 12))
     fig.suptitle("Ad Optimization Evaluation Results", fontsize=16)
     
     # 1. Action Distribution (Top Left)
-    action_labels = ["No Action"] + [f"Keyword {i}" for i in range(eval_results["action_counts"].shape[0]-1)]
-    axs[0, 0].bar(action_labels, eval_results["action_counts"])
+    action_labels = ["No Action"] + [f"Keyword {i}" for i in range(len(action_counts)-1)]
+    axs[0, 0].bar(action_labels, action_counts)
     axs[0, 0].set_title("Action Distribution")
     axs[0, 0].set_ylabel("Count")
     plt.setp(axs[0, 0].get_xticklabels(), rotation=45, ha="right")
     
     # 2. Rewards Distribution (Top Right)
-    axs[0, 1].hist(eval_results["rewards"], bins=20, alpha=0.7, color='blue')
-    axs[0, 1].axvline(x=np.mean(eval_results["rewards"]), color='r', linestyle='--', 
-                     label=f'Mean: {np.mean(eval_results["rewards"]):.2f}')
+    axs[0, 1].hist(rewards, bins=20, alpha=0.7, color='blue')
+    axs[0, 1].axvline(x=np.mean(rewards), color='r', linestyle='--', 
+                     label=f'Mean: {np.mean(rewards):.2f}')
     axs[0, 1].set_title("Reward Distribution")
     axs[0, 1].set_xlabel("Reward")
     axs[0, 1].set_ylabel("Frequency")
     axs[0, 1].legend()
     
     # 3. Feature Importance (Bottom Left)
-    if eval_results["feature_importance"] is not None:
+    if feature_importance is not None:
         # Sort features by importance
-        sorted_idx = np.argsort(eval_results["feature_importance"])
+        sorted_idx = np.argsort(feature_importance)
         axs[1, 0].barh([feature_columns[i] for i in sorted_idx], 
-                      [eval_results["feature_importance"][i] for i in sorted_idx])
+                      [feature_importance[i] for i in sorted_idx])
         axs[1, 0].set_title("Feature Importance")
         axs[1, 0].set_xlabel("Importance Score")
     else:
@@ -490,9 +512,9 @@ def visualize_evaluation(eval_results, feature_columns, output_dir="plots"):
                       ha='center', va='center', fontsize=12)
     
     # 4. Performance Over Time (Bottom Right)
-    if len(eval_results["rewards"]) > 0:
+    if len(rewards) > 0:
         # Calculate cumulative average reward
-        cum_rewards = np.cumsum(eval_results["rewards"])
+        cum_rewards = np.cumsum(rewards)
         cum_avg = cum_rewards / np.arange(1, len(cum_rewards) + 1)
         
         axs[1, 1].plot(cum_avg, color='green', label='Cumulative Average Reward')
@@ -572,7 +594,15 @@ def train_torchrl_agent(env, policy, frames_per_batch=1000, total_frames=100000,
                 if idx >= prev_idx:  # Ensure we have rewards to sum
                     episode_reward = rewards[prev_idx:idx+1].sum().item()
                     rewards_history.append(episode_reward)
-                    epsilon_values.append(exploration_module.eps if exploration_module else 0.0)
+                    # Store epsilon as a float, not a tensor
+                    if exploration_module:
+                        eps_value = exploration_module.eps
+                        # Convert to float if it's a tensor
+                        if isinstance(eps_value, torch.Tensor):
+                            eps_value = eps_value.item()
+                        epsilon_values.append(eps_value)
+                    else:
+                        epsilon_values.append(0.0)
                     prev_idx = idx + 1
         
         # Training steps
@@ -585,7 +615,7 @@ def train_torchrl_agent(env, policy, frames_per_batch=1000, total_frames=100000,
                 # Compute loss
                 loss_vals = loss_module(sample)
                 loss_val = loss_vals["loss"]
-                batch_losses.append(loss_val.item())
+                batch_losses.append(loss_val.item())  # Store as Python float
                 
                 # Update network
                 optimizer.zero_grad()
@@ -607,10 +637,17 @@ def train_torchrl_agent(env, policy, frames_per_batch=1000, total_frames=100000,
             elapsed_time = time.time() - start_time
             avg_reward = np.mean(rewards_history[-10:]) if rewards_history else 0
             avg_loss = np.mean(losses[-10:]) if losses else 0
-            epsilon = exploration_module.eps if exploration_module else 0
+            
+            # Get current epsilon value (as float)
+            if exploration_module:
+                eps_value = exploration_module.eps
+                if isinstance(eps_value, torch.Tensor):
+                    eps_value = eps_value.item()
+            else:
+                eps_value = 0.0
             
             print(f"Step {i+1}, Frames: {total_frames_seen}, Episodes: {episodes_completed}")
-            print(f"Avg Reward: {avg_reward:.2f}, Epsilon: {epsilon:.3f}, Loss: {avg_loss:.4f}")
+            print(f"Avg Reward: {avg_reward:.2f}, Epsilon: {eps_value:.3f}, Loss: {avg_loss:.4f}")
             print(f"Time elapsed: {elapsed_time:.1f}s\n")
         
         # Stop if we've seen enough frames
@@ -644,6 +681,7 @@ def evaluate_torchrl_agent(env, policy, num_episodes=10):
     
     rewards = []
     actions = []
+    tensordict_history = []  # Store the tensor dictionaries
     total_reward = 0
     episode_count = 0
     max_steps = len(env.dataset) // env.num_keywords - 1
@@ -661,8 +699,17 @@ def evaluate_torchrl_agent(env, policy, num_episodes=10):
                 td_next = evaluation_policy(tensordict)
                 action = td_next["action"]
             
+            # Move tensor to CPU before converting to numpy
+            if action.is_cuda:
+                action_np = action.cpu().numpy()
+            else:
+                action_np = action.numpy()
+                
             # Record action
-            actions.append(action.cpu().numpy())
+            actions.append(action_np)
+            
+            # Save current observation (for feature importance later)
+            tensordict_history.append(tensordict.clone())
             
             # Take step in environment
             tensordict = env.step(td_next)
@@ -697,14 +744,22 @@ def evaluate_torchrl_agent(env, policy, num_episodes=10):
     feature_importance = None
     try:
         # Get all states from evaluation
-        states = np.array([td["observation"]["keyword_features"].cpu().numpy() for td in tensordict_history])
+        states = []
+        for td in tensordict_history:
+            # Move tensor to CPU before converting to numpy
+            if td["observation"]["keyword_features"].is_cuda:
+                states.append(td["observation"]["keyword_features"].cpu().numpy())
+            else:
+                states.append(td["observation"]["keyword_features"].numpy())
+                
+        states = np.array(states)
         # Flatten states across keywords
         flattened_states = states.reshape(-1, len(feature_columns))
         # Simple correlation between features and rewards as proxy for importance
         correlations = np.abs(np.corrcoef(flattened_states.T, rewards))[:len(feature_columns), -1]
         feature_importance = correlations
-    except:
-        pass  # If we can't compute feature importance, leave as None
+    except Exception as e:
+        print(f"Could not compute feature importance: {e}")
     
     # Compile evaluation results
     eval_results = {
@@ -793,71 +848,84 @@ def main():
     # Train agent
     print("\nTraining RL agent...")
     training_start = time.time()
-    training_metrics = train_torchrl_agent(
-        env=env,
-        policy=policy_explore,
-        frames_per_batch=100,
-        total_frames=50000,  # For faster training
-        init_rand_steps=1000,
-        batch_size=64,
-        optim_steps=10,
-        lr=0.001,
-        gamma=0.99,
-        target_update_interval=200
-    )
-    training_time = time.time() - training_start
-    print(f"Training completed in {training_time:.2f} seconds")
-    
-    # Generate training visualization
-    print("Generating training visualization...")
-    training_plot_path = visualize_training_progress(training_metrics, output_dir=plot_dir)
-    print(f"Training progress plot saved to {training_plot_path}")
+    try:
+        training_metrics = train_torchrl_agent(
+            env=env,
+            policy=policy_explore,
+            frames_per_batch=100,
+            total_frames=50000,  # For faster training
+            init_rand_steps=1000,
+            batch_size=64,
+            optim_steps=10,
+            lr=0.001,
+            gamma=0.99,
+            target_update_interval=200
+        )
+        training_time = time.time() - training_start
+        print(f"Training completed in {training_time:.2f} seconds")
+        
+        # Generate training visualization
+        print("Generating training visualization...")
+        training_plot_path = visualize_training_progress(training_metrics, output_dir=plot_dir)
+        print(f"Training progress plot saved to {training_plot_path}")
+    except Exception as e:
+        print(f"Error during training or visualization: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Evaluate agent
     print("\nEvaluating trained agent...")
-    eval_episodes = 10
-    eval_results = evaluate_torchrl_agent(env, policy_explore, num_episodes=eval_episodes)
-    
-    # Print evaluation results
-    print("\nEvaluation Results:")
-    print(f"Average Reward: {eval_results['avg_reward']:.2f}")
-    print(f"Success Rate: {eval_results['success_rate']:.2f}")
-    
-    action_counts = eval_results["action_counts"]
-    total_actions = action_counts.sum()
-    print("\nAction Distribution:")
-    for i, count in enumerate(action_counts):
-        if i < env.num_keywords:
-            print(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)")
-        else:
-            print(f"  No Action: {count} ({100 * count / total_actions:.1f}%)")
-    
-    # Save evaluation metrics
-    eval_metrics_path = f"{run_dir}/evaluation_metrics.txt"
-    with open(eval_metrics_path, "w") as f:
-        f.write(f"Average Reward: {eval_results['avg_reward']:.4f}\n")
-        f.write(f"Success Rate: {eval_results['success_rate']:.4f}\n")
-        f.write(f"Total Reward: {eval_results['total_reward']:.4f}\n")
-        f.write("\nAction Distribution:\n")
+    try:
+        eval_episodes = 10
+        eval_results = evaluate_torchrl_agent(env, policy_explore, num_episodes=eval_episodes)
+        
+        # Print evaluation results
+        print("\nEvaluation Results:")
+        print(f"Average Reward: {eval_results['avg_reward']:.2f}")
+        print(f"Success Rate: {eval_results['success_rate']:.2f}")
+        
+        action_counts = eval_results["action_counts"]
+        total_actions = action_counts.sum()
+        print("\nAction Distribution:")
         for i, count in enumerate(action_counts):
             if i < env.num_keywords:
-                f.write(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)\n")
+                print(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)")
             else:
-                f.write(f"  No Action: {count} ({100 * count / total_actions:.1f}%)\n")
-    
-    # Visualize evaluation
-    print("Generating evaluation visualization...")
-    eval_plot_path = visualize_evaluation(eval_results, feature_columns, output_dir=plot_dir)
-    print(f"Evaluation plot saved to {eval_plot_path}")
+                print(f"  No Action: {count} ({100 * count / total_actions:.1f}%)")
+        
+        # Save evaluation metrics
+        eval_metrics_path = f"{run_dir}/evaluation_metrics.txt"
+        with open(eval_metrics_path, "w") as f:
+            f.write(f"Average Reward: {eval_results['avg_reward']:.4f}\n")
+            f.write(f"Success Rate: {eval_results['success_rate']:.4f}\n")
+            f.write(f"Total Reward: {eval_results['total_reward']:.4f}\n")
+            f.write("\nAction Distribution:\n")
+            for i, count in enumerate(action_counts):
+                if i < env.num_keywords:
+                    f.write(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)\n")
+                else:
+                    f.write(f"  No Action: {count} ({100 * count / total_actions:.1f}%)\n")
+        
+        # Visualize evaluation
+        print("Generating evaluation visualization...")
+        eval_plot_path = visualize_evaluation(eval_results, feature_columns, output_dir=plot_dir)
+        print(f"Evaluation plot saved to {eval_plot_path}")
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Save model
-    model_path = f"{run_dir}/ad_optimization_model.pt"
-    torch.save({
-        'model_state_dict': policy.state_dict(),
-        'feature_columns': feature_columns,
-        'training_metrics': training_metrics
-    }, model_path)
-    print(f"Model saved to {model_path}")
+    try:
+        model_path = f"{run_dir}/ad_optimization_model.pt"
+        torch.save({
+            'model_state_dict': policy.state_dict(),
+            'feature_columns': feature_columns,
+            'training_metrics': training_metrics
+        }, model_path)
+        print(f"Model saved to {model_path}")
+    except Exception as e:
+        print(f"Error saving model: {e}")
     
     print(f"\nPipeline completed successfully. All results saved to {run_dir}")
     return policy, training_metrics, eval_results
