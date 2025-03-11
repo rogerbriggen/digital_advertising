@@ -1,4 +1,117 @@
-#!/usr/bin/env python
+def visualize_evaluation(eval_results, feature_columns, output_dir="plots"):
+    """Create visualizations for evaluation metrics similar to the PyTorch implementation."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Set Seaborn style
+    sns.set(style="whitegrid")
+    
+    # Create figure with subplots
+    fig = plt.figure(figsize=(18, 12))
+    fig.suptitle("Ad Optimization RL Agent Evaluation", fontsize=16)
+    
+    # 1. Action Distribution
+    ax1 = fig.add_subplot(2, 3, 1)
+    actions = ["Conservative", "Aggressive"]
+    action_counts = [eval_results["action_distribution"].get(0, 0), eval_results["action_distribution"].get(1, 0)]
+    ax1.bar(actions, action_counts, color=["skyblue", "coral"])
+    ax1.set_title("Action Distribution")
+    ax1.set_ylabel("Frequency")
+    
+    # 2. Average Reward by Action Type
+    ax2 = fig.add_subplot(2, 3, 2)
+    ax2.bar(["Conservative", "Aggressive"], 
+            [eval_results["avg_conservative_reward"], eval_results["avg_aggressive_reward"]], 
+            color=["skyblue", "coral"])
+    ax2.set_title("Average Reward by Action Type")
+    ax2.set_ylabel("Average Reward")
+    
+    # 3. Feature Correlations with Decisions
+    ax3 = fig.add_subplot(2, 3, 3)
+    states = eval_results.get("states", np.array([]))
+    
+    if "decisions" in eval_results and eval_results["decisions"]:
+        decisions = np.array([a for a, _ in eval_results["decisions"]])
+        
+        correlations = []
+        feature_names = []
+        
+        if states.size > 0 and decisions.size > 0 and states.shape[1] == len(feature_columns):
+            for i, feature in enumerate(feature_columns):
+                try:
+                    corr = np.corrcoef(states[:, i], decisions)[0, 1]
+                    if not np.isnan(corr):
+                        correlations.append(corr)
+                        feature_names.append(feature)
+                except:
+                    pass
+        
+        if correlations:
+            sorted_indices = np.argsort(np.abs(correlations))[::-1][:5]  # Top 5 features
+            top_features = [feature_names[i] for i in sorted_indices]
+            top_correlations = [correlations[i] for i in sorted_indices]
+            
+            ax3.barh(top_features, top_correlations, color='teal')
+            ax3.set_title("Top Feature Correlations with Actions")
+            ax3.set_xlabel("Correlation Coefficient")
+        else:
+            ax3.text(0.5, 0.5, "Insufficient data for correlation analysis", 
+                    ha='center', va='center')
+    else:
+        ax3.text(0.5, 0.5, "No decision data available", 
+                ha='center', va='center')
+    
+    # 4. Reward Distribution
+    ax4 = fig.add_subplot(2, 3, 4)
+    if "rewards" in eval_results and eval_results["rewards"]:
+        sns.histplot(eval_results["rewards"], kde=True, ax=ax4)
+        ax4.set_title("Reward Distribution")
+        ax4.set_xlabel("Reward")
+        ax4.set_ylabel("Frequency")
+    else:
+        ax4.text(0.5, 0.5, "No reward data available", ha='center', va='center')
+    
+    # 5. Decision Quality Matrix
+    ax5 = fig.add_subplot(2, 3, 5)
+    decision_quality = np.zeros((2, 2))
+    
+    if "decisions" in eval_results and eval_results["decisions"]:
+        for action, reward in eval_results["decisions"]:
+            quality = 1 if reward > 0 else 0
+            if action < 2:  # Ensure action is either 0 or 1
+                decision_quality[action, quality] += 1
+        
+        row_sums = decision_quality.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1, row_sums)  # Avoid division by zero
+        decision_quality_norm = decision_quality / row_sums
+        
+        sns.heatmap(decision_quality_norm, annot=True, fmt=".2f", cmap="YlGnBu",
+                  xticklabels=["Poor", "Good"], 
+                  yticklabels=["Conservative", "Aggressive"],
+                  ax=ax5)
+        ax5.set_title("Decision Quality Matrix")
+        ax5.set_ylabel("Action")
+        ax5.set_xlabel("Decision Quality")
+    else:
+        ax5.text(0.5, 0.5, "No decision data available", 
+               ha='center', va='center')
+    
+    # 6. Success Rate or Pie Chart
+    ax6 = fig.add_subplot(2, 3, 6)
+    if "decisions" in eval_results and eval_results["decisions"]:
+        # Calculate success rate
+        success_rate = eval_results["success_rate"]
+        
+        # Create a pie chart of success rate
+        ax6.pie([success_rate, 1-success_rate], 
+               labels=["Success", "Failure"], 
+               colors=["green", "lightgray"],
+               autopct='%1.1f%%', 
+               startangle=90)
+        ax6.set_title("Decision Success Rate")
+    else:
+        ax6.text(0.5, 0.5, "Success rate data not available", 
+               ha='center', va='center')
+    #!/usr/bin/env python
 # coding: utf-8
 
 import torch
@@ -246,7 +359,9 @@ class AdEnv(EnvBase):
         return result
     
     def _compute_reward(self, action, sample):
-        """Compute reward based on action and current state."""
+        """Compute reward based on action and current state.
+        Matches the reward computation from the PyTorch implementation.
+        """
         # Extract key metrics
         cost = float(sample["ad_spend"])
         ctr = float(sample["paid_ctr"])
@@ -359,101 +474,149 @@ def visualize_training_progress(metrics, output_dir="plots", window_size=20):
     return plot_path
 
 def visualize_evaluation(eval_results, feature_columns, output_dir="plots"):
-    """Visualize the evaluation results."""
+    """Create visualizations for evaluation metrics similar to the PyTorch implementation."""
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert any tensors to numpy arrays
-    action_counts = eval_results["action_counts"]
-    rewards = eval_results["rewards"]
-    feature_importance = eval_results.get("feature_importance", None)
+    # Set Seaborn style
+    sns.set(style="whitegrid")
     
-    # Check and convert tensors
-    if isinstance(action_counts, torch.Tensor):
-        action_counts = action_counts.cpu().numpy()
-    if isinstance(rewards, torch.Tensor):
-        rewards = rewards.cpu().numpy()
-    if isinstance(feature_importance, torch.Tensor):
-        feature_importance = feature_importance.cpu().numpy()
+    # Create figure with subplots
+    fig = plt.figure(figsize=(18, 12))
+    fig.suptitle("Ad Optimization RL Agent Evaluation", fontsize=16)
     
-    # Create a figure with 2x2 subplots
-    fig, axs = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle("Ad Optimization Evaluation Results", fontsize=16)
+    # 1. Action Distribution
+    ax1 = fig.add_subplot(2, 3, 1)
+    actions = ["Conservative", "Aggressive"]
+    action_counts = [eval_results["action_distribution"].get(0, 0), eval_results["action_distribution"].get(1, 0)]
+    ax1.bar(actions, action_counts, color=["skyblue", "coral"])
+    ax1.set_title("Action Distribution")
+    ax1.set_ylabel("Frequency")
     
-    # 1. Action Distribution (Top Left)
-    action_labels = ["Conservative", "Aggressive"]
+    # 2. Average Reward by Action Type
+    ax2 = fig.add_subplot(2, 3, 2)
+    ax2.bar(["Conservative", "Aggressive"], 
+            [eval_results["avg_conservative_reward"], eval_results["avg_aggressive_reward"]], 
+            color=["skyblue", "coral"])
+    ax2.set_title("Average Reward by Action Type")
+    ax2.set_ylabel("Average Reward")
     
-    # Check if we have any actions
-    if np.sum(action_counts) > 0:
-        axs[0, 0].bar(action_labels, action_counts)
-        axs[0, 0].set_title("Action Distribution")
-        axs[0, 0].set_ylabel("Count")
-        plt.setp(axs[0, 0].get_xticklabels(), rotation=45, ha="right")
-    else:
-        axs[0, 0].text(0.5, 0.5, "No actions recorded during evaluation", 
-                      ha='center', va='center', fontsize=12)
-        axs[0, 0].set_title("Action Distribution (Empty)")
+    # 3. Feature Correlations with Decisions
+    ax3 = fig.add_subplot(2, 3, 3)
+    states = eval_results.get("states", np.array([]))
     
-    # 2. Rewards Distribution (Top Right)
-    if len(rewards) > 0:
-        axs[0, 1].hist(rewards, bins=min(20, len(set(rewards))), alpha=0.7, color='blue')
-        mean_reward = np.mean(rewards) if len(rewards) > 0 else 0
-        axs[0, 1].axvline(x=mean_reward, color='r', linestyle='--', 
-                         label=f'Mean: {mean_reward:.2f}')
-        axs[0, 1].set_title("Reward Distribution")
-        axs[0, 1].set_xlabel("Reward")
-        axs[0, 1].set_ylabel("Frequency")
-        axs[0, 1].legend()
-    else:
-        axs[0, 1].text(0.5, 0.5, "No reward data available", 
-                      ha='center', va='center', fontsize=12)
-        axs[0, 1].set_title("Reward Distribution (Empty)")
-    
-    # 3. Feature Importance (Bottom Left)
-    if feature_importance is not None and len(feature_importance) > 0 and not np.isnan(feature_importance).any():
-        # Sort features by importance
-        sorted_idx = np.argsort(feature_importance)
-        sorted_idx = sorted_idx[::-1]  # Reverse for descending order
-        axs[1, 0].barh([feature_columns[i] for i in sorted_idx], 
-                      [feature_importance[i] for i in sorted_idx])
-        axs[1, 0].set_title("Feature Importance")
-        axs[1, 0].set_xlabel("Importance Score")
-    else:
-        axs[1, 0].text(0.5, 0.5, "Feature importance not available", 
-                      ha='center', va='center', fontsize=12)
-        axs[1, 0].set_title("Feature Importance (Not Available)")
-    
-    # 4. Performance Over Time (Bottom Right)
-    if len(rewards) > 0:
-        # Calculate cumulative average reward
-        cum_rewards = np.cumsum(rewards)
-        cum_avg = cum_rewards / np.arange(1, len(cum_rewards) + 1)
+    if "decisions" in eval_results and eval_results["decisions"]:
+        decisions = np.array([a for a, _ in eval_results["decisions"]])
         
-        axs[1, 1].plot(cum_avg, color='green', label='Cumulative Average Reward')
-        axs[1, 1].set_title("Performance Over Time")
-        axs[1, 1].set_xlabel("Steps")
-        axs[1, 1].set_ylabel("Cumulative Average Reward")
-        axs[1, 1].legend()
+        correlations = []
+        feature_names = []
+        
+        if states.size > 0 and decisions.size > 0 and states.shape[1] == len(feature_columns):
+            for i, feature in enumerate(feature_columns):
+                try:
+                    corr = np.corrcoef(states[:, i], decisions)[0, 1]
+                    if not np.isnan(corr):
+                        correlations.append(corr)
+                        feature_names.append(feature)
+                except:
+                    pass
+        
+        if correlations:
+            sorted_indices = np.argsort(np.abs(correlations))[::-1][:5]  # Top 5 features
+            top_features = [feature_names[i] for i in sorted_indices]
+            top_correlations = [correlations[i] for i in sorted_indices]
+            
+            ax3.barh(top_features, top_correlations, color='teal')
+            ax3.set_title("Top Feature Correlations with Actions")
+            ax3.set_xlabel("Correlation Coefficient")
+        else:
+            ax3.text(0.5, 0.5, "Insufficient data for correlation analysis", 
+                    ha='center', va='center')
     else:
-        axs[1, 1].text(0.5, 0.5, "No reward data available", 
-                      ha='center', va='center', fontsize=12)
-        axs[1, 1].set_title("Performance Over Time (No Data)")
+        ax3.text(0.5, 0.5, "No decision data available", 
+                ha='center', va='center')
+    
+    # 4. Reward Distribution
+    ax4 = fig.add_subplot(2, 3, 4)
+    if "rewards" in eval_results and eval_results["rewards"]:
+        sns.histplot(eval_results["rewards"], kde=True, ax=ax4)
+        ax4.set_title("Reward Distribution")
+        ax4.set_xlabel("Reward")
+        ax4.set_ylabel("Frequency")
+    else:
+        ax4.text(0.5, 0.5, "No reward data available", ha='center', va='center')
+    
+    # 5. Decision Quality Matrix
+    ax5 = fig.add_subplot(2, 3, 5)
+    decision_quality = np.zeros((2, 2))
+    
+    if "decisions" in eval_results and eval_results["decisions"]:
+        for action, reward in eval_results["decisions"]:
+            quality = 1 if reward > 0 else 0
+            if action < 2:  # Ensure action is either 0 or 1
+                decision_quality[action, quality] += 1
+        
+        row_sums = decision_quality.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1, row_sums)  # Avoid division by zero
+        decision_quality_norm = decision_quality / row_sums
+        
+        sns.heatmap(decision_quality_norm, annot=True, fmt=".2f", cmap="YlGnBu",
+                  xticklabels=["Poor", "Good"], 
+                  yticklabels=["Conservative", "Aggressive"],
+                  ax=ax5)
+        ax5.set_title("Decision Quality Matrix")
+        ax5.set_ylabel("Action")
+        ax5.set_xlabel("Decision Quality")
+    else:
+        ax5.text(0.5, 0.5, "No decision data available", 
+               ha='center', va='center')
+    
+    # 6. Success Rate Over Time or Pie Chart
+    ax6 = fig.add_subplot(2, 3, 6)
+    if "decisions" in eval_results and len(eval_results["decisions"]) > 20:
+        # Calculate moving success rate if we have enough data
+        window = min(20, len(eval_results["decisions"]))
+        success_rates = []
+        for i in range(len(eval_results["decisions"]) - window + 1):
+            window_decisions = eval_results["decisions"][i:i+window]
+            success_rate = sum(1 for _, r in window_decisions if r > 0) / window
+            success_rates.append(success_rate)
+        
+        ax6.plot(range(window-1, len(eval_results["decisions"])), success_rates, color='green')
+        ax6.set_title(f"Success Rate (Moving Window: {window})")
+        ax6.set_xlabel("Decision")
+        ax6.set_ylabel("Success Rate")
+        ax6.set_ylim(0, 1)
+        ax6.grid(True, alpha=0.3)
+    elif "success_rate" in eval_results:
+        # Create a pie chart of success rate
+        success_rate = eval_results["success_rate"]
+        
+        ax6.pie([success_rate, 1-success_rate], 
+               labels=["Success", "Failure"], 
+               colors=["green", "lightgray"],
+               autopct='%1.1f%%', 
+               startangle=90)
+        ax6.set_title("Decision Success Rate")
+    else:
+        ax6.text(0.5, 0.5, "Success rate data not available", 
+               ha='center', va='center')
     
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plot_path = f"{output_dir}/evaluation_results.png"
+    plot_path = f"{output_dir}/agent_evaluation.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     
     return plot_path
 
-# Simplified training function with minimal TorchRL dependencies
-def train_agent_simple(env, policy, total_frames=50000, batch_size=64, lr=0.001, gamma=0.99, target_update_freq=10):
+# Simplified training function with TorchRL components but clearer reward handling
+def train_agent_simple(env, policy, total_episodes=200, batch_size=64, lr=0.001, gamma=0.99, target_update_freq=10):
     """
-    Train a policy with a simplified approach that's less dependent on specific TorchRL features.
+    Train a policy with a TorchRL approach but with explicit reward handling.
     
     Args:
         env: The environment to train on
         policy: The policy module to train
-        total_frames: Total number of frames to train for
+        total_episodes: Total number of episodes to train for
         batch_size: Batch size for training
         lr: Learning rate
         gamma: Discount factor
@@ -474,150 +637,150 @@ def train_agent_simple(env, policy, total_frames=50000, batch_size=64, lr=0.001,
     replay_buffer = []
     
     # Metrics for tracking
-    total_frames_seen = 0
     rewards_history = []
     losses = []
     epsilon_values = []
     episodes_completed = 0
-    episode_reward = 0
+    
+    # Initial epsilon and decay
+    epsilon = 1.0
+    epsilon_min = 0.05
+    epsilon_decay = 0.995
     
     print("Starting training...")
     start_time = time.time()
     
-    # Initialize environment
-    td = env.reset()
-    
-    # Training loop
-    while total_frames_seen < total_frames:
-        # For exploration, we use epsilon-greedy directly
-        # Get epsilon value from exploration module if it exists
-        epsilon = 0.9 * max(0.1, 1.0 - (total_frames_seen / (total_frames * 0.5)))
+    # Training loop - episode-based like in the PyTorch implementation
+    for episode in range(total_episodes):
+        # Initialize environment
+        td = env.reset()
+        episode_reward = 0
+        episode_loss = 0
+        step_count = 0
+        done = False
         
-        # Select action
-        with torch.no_grad():
-            # Forward through policy
-            td_action = policy(td)
+        while not done:
+            # Select action with epsilon-greedy
+            with torch.no_grad():
+                # Forward through policy
+                td_action = policy(td)
+                
+                # Epsilon-greedy exploration
+                if random.random() < epsilon:
+                    # Random action
+                    random_action = torch.zeros_like(td_action["action"])
+                    random_idx = random.randint(0, 1)  # Binary action
+                    random_action[random_idx] = 1.0
+                    td_action["action"] = random_action
+                
+            # Get action index for reward calculation
+            action_idx = torch.argmax(td_action["action"]).item()
             
-            # Epsilon-greedy exploration
-            if random.random() < epsilon:
-                # Random action
-                random_action = torch.zeros_like(td_action["action"])
-                random_idx = random.randint(0, 1)  # Binary action
-                random_action[random_idx] = 1.0
-                td_action["action"] = random_action
-        
-        # Store current state
-        current_obs = td["observation"].clone()
-        current_action = td_action["action"].clone()
-        
-        # Step environment
-        td_next = env.step(td_action)
-        
-        # Get reward (handle missing reward key)
-        if "reward" in td_next:
-            reward = td_next["reward"].item()
-        else:
-            # Calculate reward manually if it's missing
+            # Store current state
+            current_obs = td["observation"].clone()
+            current_action = action_idx  # Store action index directly
+            
+            # Step environment
+            td_next = env.step(td_action)
+            
+            # Compute reward directly to ensure it's correct
             current_index = env.current_index - 1  # Step has already incremented this
             sample = env.dataset.iloc[current_index]
-            reward = env._compute_reward(torch.argmax(current_action).item(), sample)
-        
-        # Check for done key
-        if "done" in td_next:
-            done = td_next["done"].item()
-        elif "terminated" in td_next:
-            done = td_next["terminated"].item()
-        else:
-            # Fallback: check if we've reached the end
-            done = env.current_index >= env.max_index
-        
-        # Store transition
-        replay_buffer.append({
-            "observation": current_obs,
-            "action": current_action,
-            "next_observation": td_next["observation"].clone(),
-            "reward": reward,
-            "done": done
-        })
-        
-        # Limit buffer size
-        if len(replay_buffer) > buffer_capacity:
-            replay_buffer.pop(0)
-        
-        # Update episode reward
-        episode_reward += reward
-        
-        # If episode is done, reset environment
-        if done:
-            rewards_history.append(episode_reward)
-            epsilon_values.append(epsilon)
-            episode_reward = 0
-            episodes_completed += 1
-            td = env.reset()
-        else:
+            reward = env._compute_reward(action_idx, sample)
+            
+            # Check done state
+            if "done" in td_next:
+                done = td_next["done"].item()
+            elif "terminated" in td_next:
+                done = td_next["terminated"].item()
+            else:
+                done = env.current_index >= env.max_index
+            
+            # Store transition
+            replay_buffer.append({
+                "observation": current_obs,
+                "action": current_action,
+                "next_observation": td_next["observation"].clone(),
+                "reward": reward,
+                "done": done
+            })
+            
+            # Limit buffer size
+            if len(replay_buffer) > buffer_capacity:
+                replay_buffer.pop(0)
+            
+            # Update episode reward
+            episode_reward += reward
+            
+            # Update state
             td = td_next
+            
+            # Train if we have enough data
+            if len(replay_buffer) >= batch_size:
+                # Sample batch
+                batch_indices = random.sample(range(len(replay_buffer)), batch_size)
+                batch = [replay_buffer[idx] for idx in batch_indices]
+                
+                # Convert batch to tensors
+                obs_batch = torch.stack([item["observation"] for item in batch])
+                act_batch = torch.tensor([item["action"] for item in batch], dtype=torch.long, device=device)
+                next_obs_batch = torch.stack([item["next_observation"] for item in batch])
+                rewards_batch = torch.tensor([item["reward"] for item in batch], device=device)
+                done_batch = torch.tensor([item["done"] for item in batch], dtype=torch.bool, device=device)
+                
+                # Compute Q-values for current states and actions
+                td_batch = TensorDict({"observation": obs_batch}, batch_size=[batch_size])
+                q_values = policy(td_batch)["action_value"]
+                q_values_selected = q_values.gather(1, act_batch.unsqueeze(1)).squeeze()
+                
+                # Compute target Q-values
+                with torch.no_grad():
+                    next_td_batch = TensorDict({"observation": next_obs_batch}, batch_size=[batch_size])
+                    next_q_values = target_policy(next_td_batch)["action_value"]
+                    next_q_values_max = next_q_values.max(1)[0]
+                    target_q_values = rewards_batch + gamma * next_q_values_max * (~done_batch)
+                
+                # Compute loss
+                loss = nn.MSELoss()(q_values_selected, target_q_values)
+                
+                # Update policy
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                episode_loss += loss.item()
+                step_count += 1
+            
+            # Update target network periodically
+            if step_count > 0 and step_count % target_update_freq == 0:
+                target_policy.load_state_dict(policy.state_dict())
         
-        # Increment frame counter
-        total_frames_seen += 1
+        # Update epsilon with decay
+        epsilon = max(epsilon_min, epsilon * epsilon_decay)
         
-        # Train if we have enough data
-        if len(replay_buffer) >= batch_size:
-            # Sample batch
-            batch_indices = random.sample(range(len(replay_buffer)), batch_size)
-            batch = [replay_buffer[idx] for idx in batch_indices]
-            
-            # Convert batch to tensors
-            obs_batch = torch.stack([item["observation"] for item in batch])
-            act_batch = torch.stack([item["action"] for item in batch])
-            next_obs_batch = torch.stack([item["next_observation"] for item in batch])
-            rewards_batch = torch.tensor([item["reward"] for item in batch], device=device)
-            done_batch = torch.tensor([item["done"] for item in batch], dtype=torch.bool, device=device)
-            
-            # Compute Q-values for current states and actions
-            q_values = policy(TensorDict({"observation": obs_batch}, batch_size=[batch_size]))["action_value"]
-            action_indices = torch.argmax(act_batch, dim=1, keepdim=True)
-            q_values_selected = q_values.gather(1, action_indices).squeeze()
-            
-            # Compute target Q-values
-            with torch.no_grad():
-                next_q_values = target_policy(TensorDict({"observation": next_obs_batch}, batch_size=[batch_size]))["action_value"]
-                next_q_values_max = next_q_values.max(1)[0]
-                target_q_values = rewards_batch + gamma * next_q_values_max * (~done_batch)
-            
-            # Compute loss
-            loss = nn.MSELoss()(q_values_selected, target_q_values)
-            
-            # Update policy
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            losses.append(loss.item())
-        
-        # Update target network periodically
-        if total_frames_seen % target_update_freq == 0:
-            target_policy.load_state_dict(policy.state_dict())
+        # Record metrics
+        rewards_history.append(episode_reward)
+        epsilon_values.append(epsilon)
+        if step_count > 0:
+            losses.append(episode_loss / step_count)
         
         # Logging
-        if total_frames_seen % 1000 == 0:
-            elapsed_time = time.time() - start_time
+        if (episode + 1) % 10 == 0:
             avg_reward = np.mean(rewards_history[-10:]) if rewards_history else 0
             avg_loss = np.mean(losses[-10:]) if losses else 0
             
-            print(f"Frame {total_frames_seen}/{total_frames}, Episodes: {episodes_completed}")
-            print(f"Avg Reward: {avg_reward:.2f}, Epsilon: {epsilon:.3f}, Loss: {avg_loss:.4f}")
-            print(f"Time elapsed: {elapsed_time:.1f}s\n")
+            print(f"Episode {episode+1}/{total_episodes}, Avg Reward: {avg_reward:.2f}, Epsilon: {epsilon:.3f}")
+            if losses:
+                print(f"Avg Loss: {avg_loss:.4f}")
     
     total_time = time.time() - start_time
     print(f"Training completed in {total_time:.2f} seconds")
-    print(f"Total frames: {total_frames_seen}, Episodes: {episodes_completed}")
     
     return {
         "rewards": rewards_history,
         "losses": losses,
         "epsilon_values": epsilon_values,
-        "episodes": episodes_completed,
-        "frames": total_frames_seen,
+        "episodes": total_episodes,
         "training_time": total_time
     }
 
@@ -776,7 +939,7 @@ def main():
     training_metrics = train_agent_simple(
         env=env,
         policy=policy,
-        total_frames=20000,  # Reduced for faster training
+        total_episodes=200,  # Match the PyTorch implementation
         batch_size=64,
         lr=0.001,
         gamma=0.99,
@@ -798,15 +961,11 @@ def main():
     print(f"Success Rate: {eval_results['success_rate']:.2f}")
     
     # Print action distribution
-    action_counts = eval_results["action_counts"]
-    total_actions = action_counts.sum()
+    action_distribution = eval_results["action_distribution"]
     
     print("\nAction Distribution:")
-    if total_actions > 0:
-        print(f"  Conservative: {action_counts[0]} ({100 * action_counts[0] / total_actions:.1f}%)")
-        print(f"  Aggressive: {action_counts[1]} ({100 * action_counts[1] / total_actions:.1f}%)")
-    else:
-        print("  No actions recorded during evaluation")
+    print(f"  Conservative: {action_distribution[0]:.2f} ({100 * action_distribution[0]:.1f}%)")
+    print(f"  Aggressive: {action_distribution[1]:.2f} ({100 * action_distribution[1]:.1f}%)")
     
     # Save evaluation metrics
     eval_metrics_path = f"{run_dir}/evaluation_metrics.txt"
@@ -815,12 +974,13 @@ def main():
         f.write(f"Success Rate: {eval_results['success_rate']:.4f}\n")
         f.write(f"Total Reward: {eval_results['total_reward']:.4f}\n")
         f.write("\nAction Distribution:\n")
+        f.write(f"  Conservative: {action_distribution[0]:.2f} ({100 * action_distribution[0]:.1f}%)\n")
+        f.write(f"  Aggressive: {action_distribution[1]:.2f} ({100 * action_distribution[1]:.1f}%)\n")
         
-        if total_actions > 0:
-            f.write(f"  Conservative: {action_counts[0]} ({100 * action_counts[0] / total_actions:.1f}%)\n")
-            f.write(f"  Aggressive: {action_counts[1]} ({100 * action_counts[1] / total_actions:.1f}%)\n")
-        else:
-            f.write("  No actions recorded during evaluation\n")
+        if "avg_conservative_reward" in eval_results:
+            f.write(f"\nAverage Conservative Reward: {eval_results['avg_conservative_reward']:.4f}\n")
+        if "avg_aggressive_reward" in eval_results:
+            f.write(f"Average Aggressive Reward: {eval_results['avg_aggressive_reward']:.4f}\n")
     
     # Visualize evaluation
     print("Generating evaluation visualization...")
