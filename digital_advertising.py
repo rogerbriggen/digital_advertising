@@ -1,64 +1,60 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import random
+from typing import Optional
 from torchrl.envs import EnvBase
+from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
 from torchrl.data.replay_buffers import TensorDictReplayBuffer
 from torchrl.objectives import DQNLoss
 from torchrl.collectors import SyncDataCollector
-from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModule
-from typing import Optional
 from torchrl.modules import EGreedyModule, MLP, QValueModule
-from torchrl.data import OneHot, Bounded, Unbounded, Binary, MultiCategorical, Composite, UnboundedContinuous
-
-
+from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, TensorDictSequential
 
 
-# Specify device explicitly
-device = torch.device("cpu")  # or "cuda" if you have GPU support
 
-# Generate Realistic Synthetic Data
-#Platzierung:
-#Organisch: Erscheint aufgrund des Suchalgorithmus, ohne Bezahlung.
-#Paid: Wird aufgrund einer Werbekampagne oder bezahlten Platzierung angezeigt.
-#Kosten:
-#Organisch: Es fallen in der Regel keine direkten Kosten pro Klick oder Impression an.
-#Paid: Werbetreibende zahlen oft pro Klick (CPC) oder pro Impression (CPM = pro Sichtkontakt, unabhängig ob jemand klickt oder nicht).
+# Select the best device for our machine
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else
+    "mps" if torch.backends.mps.is_available() else
+    "cpu"
+)
+print(device)
+
+
+# Generate Realistic Synthetic Data. This is coming from Ilja's code
+# Platzierung:
+#    - Organisch: Erscheint aufgrund des Suchalgorithmus, ohne Bezahlung.
+#    - Paid: Wird aufgrund einer Werbekampagne oder bezahlten Platzierung angezeigt.
+# Kosten:
+#    - Organisch: Es fallen in der Regel keine direkten Kosten pro Klick oder Impression an.
+#    - Paid: Werbetreibende zahlen oft pro Klick (CPC) oder pro Impression (CPM = pro Sichtkontakt, unabhängig ob jemand klickt oder nicht).
 def generate_synthetic_data(num_samples=1000):
     data = {
-        "keyword": [f"Keyword_{i}" for i in range(num_samples)],  # Eindeutiger Name oder Identifier für das Keyword
-        "competitiveness": np.random.uniform(0, 1, num_samples),     # Wettbewerbsfähigkeit des Keywords (Wert zwischen 0 und 1). Je mehr Leute das Keyword wollen, desto näher bei 1 und somit desto teurer.
-        "difficulty_score": np.random.uniform(0, 1, num_samples),      # Schwierigkeitsgrad des Keywords organisch gute Platzierung zu erreichen (Wert zwischen 0 und 1). 1 = mehr Aufwand und Optimierung nötig.
-        "organic_rank": np.random.randint(1, 11, num_samples),         # Organischer Rang, z.B. Position in Suchergebnissen (1 bis 10)
-        "organic_clicks": np.random.randint(50, 5000, num_samples),    # Anzahl der Klicks auf organische Suchergebnisse
-        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),      # Klickrate (CTR) für organische Suchergebnisse
-        "paid_clicks": np.random.randint(10, 3000, num_samples),       # Anzahl der Klicks auf bezahlte Anzeigen
-        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),        # Klickrate (CTR) für bezahlte Anzeigen
-        "ad_spend": np.random.uniform(10, 10000, num_samples),         # Werbebudget bzw. Ausgaben für Anzeigen
-        "ad_conversions": np.random.randint(0, 500, num_samples),      # Anzahl der Conversions (Erfolge) von Anzeigen
-        "ad_roas": np.random.uniform(0.5, 5, num_samples),             # Return on Ad Spend (ROAS) für Anzeigen, wobei Werte < 1 Verlust anzeigen
-        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),    # Conversion-Rate (Prozentsatz der Besucher, die konvertieren)
-        "cost_per_click": np.random.uniform(0.1, 10, num_samples),     # Kosten pro Klick (CPC)
-        "cost_per_acquisition": np.random.uniform(5, 500, num_samples),  # Kosten pro Akquisition (CPA)
+        "keyword": [f"Keyword_{i}" for i in range(num_samples)],        # Eindeutiger Name oder Identifier für das Keyword
+        "competitiveness": np.random.uniform(0, 1, num_samples),        # Wettbewerbsfähigkeit des Keywords (Wert zwischen 0 und 1). Je mehr Leute das Keyword wollen, desto näher bei 1 und somit desto teurer.
+        "difficulty_score": np.random.uniform(0, 1, num_samples),       # Schwierigkeitsgrad des Keywords organisch gute Platzierung zu erreichen (Wert zwischen 0 und 1). 1 = mehr Aufwand und Optimierung nötig.
+        "organic_rank": np.random.randint(1, 11, num_samples),          # Organischer Rang, z.B. Position in Suchergebnissen (1 bis 10)
+        "organic_clicks": np.random.randint(50, 5000, num_samples),     # Anzahl der Klicks auf organische Suchergebnisse
+        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),       # Klickrate (CTR) für organische Suchergebnisse
+        "paid_clicks": np.random.randint(10, 3000, num_samples),        # Anzahl der Klicks auf bezahlte Anzeigen
+        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),         # Klickrate (CTR) für bezahlte Anzeigen
+        "ad_spend": np.random.uniform(10, 10000, num_samples),          # Werbebudget bzw. Ausgaben für Anzeigen
+        "ad_conversions": np.random.randint(0, 500, num_samples),       # Anzahl der Conversions (Erfolge) von Anzeigen
+        "ad_roas": np.random.uniform(0.5, 5, num_samples),              # Return on Ad Spend (ROAS) für Anzeigen, wobei Werte < 1 Verlust anzeigen
+        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),   # Conversion-Rate (Prozentsatz der Besucher, die konvertieren)
+        "cost_per_click": np.random.uniform(0.1, 10, num_samples),      # Kosten pro Klick (CPC)
+        "cost_per_acquisition": np.random.uniform(5, 500, num_samples), # Kosten pro Akquisition (CPA)
         "previous_recommendation": np.random.choice([0, 1], size=num_samples),  # Frühere Empfehlung (0 = nein, 1 = ja)
-        "impression_share": np.random.uniform(0.1, 1.0, num_samples),  # Anteil an Impressionen (Sichtbarkeit der Anzeige) im Vergleich mit allen anderen die dieses Keyword wollen
-        "conversion_value": np.random.uniform(0, 10000, num_samples)   # Monetärer Wert der Conversions (Ein monetärer Wert, der den finanziellen Nutzen aus den erzielten Conversions widerspiegelt. Dieser Wert gibt an, wie viel Umsatz oder Gewinn durch die Conversions generiert wurde – je höher der Wert, desto wertvoller sind die Conversions aus Marketingsicht.)
+        "impression_share": np.random.uniform(0.1, 1.0, num_samples),   # Anteil an Impressionen (Sichtbarkeit der Anzeige) im Vergleich mit allen anderen die dieses Keyword wollen
+        "conversion_value": np.random.uniform(0, 10000, num_samples)    # Monetärer Wert der Conversions (Ein monetärer Wert, der den finanziellen Nutzen aus den erzielten Conversions widerspiegelt. Dieser Wert gibt an, wie viel Umsatz oder Gewinn durch die Conversions generiert wurde – je höher der Wert, desto wertvoller sind die Conversions aus Marketingsicht.)
     }
     return pd.DataFrame(data)
 
@@ -68,36 +64,24 @@ print(test.shape)
 print(test.columns)
 
 
-def getKeywords():
-    return ["investments", "stocks", "crypto", "cryptocurrency", "bitcoin", "real estate", "gold", "bonds", "broker", "finance", "trading", "forex", "etf", "investment fund", "investment strategy", "investment advice", "investment portfolio", "investment opportunities", "investment options", "investment calculator", "investment plan", "investment account", "investment return", "investment risk", "investment income", "investment growth", "investment loss", "investment profit", "investment return calculator", "investment return formula", "investment return rate"]
-
-
-def generateData():
-    seed = 42  # or any integer of your choice
-    random.seed(seed)      # Sets the seed for the Python random module
-    np.random.seed(seed)   # Sets the seed for NumPy's random generator
-    torch.manual_seed(seed)  # Sets the seed for PyTorch
-
-    # If you're using CUDA as well, you may also set:
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    
-    # Generate synthetic data
-    # Do it 1000 times
-    dataset = pd.DataFrame()
-    for i in range(1000):
-        # append to dataset
-        dataset = generate_synthetic_data(len(getKeywords()))
-        
-
-
 # Load synthetic dataset
 dataset = generate_synthetic_data(1000)
 feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
 
 
 def read_and_organize_csv(file_path):
+    """
+    Reads a CSV file, organizes the data by keywords, and returns the organized DataFrame.
+    This function performs the following steps:
+    1. Reads the CSV file from the given file path into a DataFrame.
+    2. Drops the 'step' column from the DataFrame.
+    3. Extracts unique keywords from the 'keyword' column.
+    4. Organizes the data by iterating through the first 5000 rows for each keyword and concatenates the rows into a new DataFrame.
+    Args:
+        file_path (str): The file path to the CSV file.
+    Returns:
+        pd.DataFrame: A DataFrame containing the organized data, with the index reset.
+    """
     df = pd.read_csv(file_path)
     organized_data = pd.DataFrame()
 
@@ -117,14 +101,23 @@ def read_and_organize_csv(file_path):
     return organized_data.reset_index(drop=True)
 
 # Example usage
-#organized_dataset = read_and_organize_csv('18 TorchRL Ads/balanced_ad_dataset_real_keywords.csv')
-#organized_dataset.to_csv('organized_dataset.csv', index=False)
-
-
 dataset = pd.read_csv('data/organized_dataset.csv')
 dataset.head()
 
+
 def get_entry_from_dataset(df, index):
+    """
+    Retrieves a subset of rows from the DataFrame based on unique keywords.
+    This function calculates the number of unique keywords in the DataFrame
+    and uses this number to determine the subset of rows to return. The subset
+    is determined by the given index and the number of unique keywords.
+    Parameters:
+    df (pandas.DataFrame): The DataFrame containing the dataset.
+    index (int): The index to determine which subset of rows to retrieve.
+    Returns:
+    pandas.DataFrame: A subset of the DataFrame containing rows corresponding
+                      to the specified index and the number of unique keywords.
+    """
     # Count unique keywords
     seen_keywords = set()
     if not hasattr(get_entry_from_dataset, "unique_keywords"):
@@ -139,6 +132,7 @@ def get_entry_from_dataset(df, index):
     else:
         seen_keywords = get_entry_from_dataset.unique_keywords
 
+    # Get the subset of rows based on the index
     keywords_amount = get_entry_from_dataset.keywords_amount
     return df.iloc[index * keywords_amount:index * keywords_amount + keywords_amount].reset_index(drop=True)
 
@@ -152,15 +146,56 @@ print(entry)
 
 # Define a Custom TorchRL Environment
 class AdOptimizationEnv(EnvBase):
+    """
+    AdOptimizationEnv is an environment for optimizing digital advertising strategies using reinforcement learning.
+    Attributes:
+        initial_cash (float): Initial cash balance for the environment.
+        dataset (pd.DataFrame): Dataset containing keyword metrics.
+        num_features (int): Number of features for each keyword.
+        num_keywords (int): Number of keywords in the dataset.
+        action_spec (OneHot): Action specification for the environment.
+        reward_spec (Unbounded): Reward specification for the environment.
+        observation_spec (Composite): Observation specification for the environment.
+        done_spec (Composite): Done specification for the environment.
+        current_step (int): Current step in the environment.
+        holdings (torch.Tensor): Tensor representing the current holdings of keywords.
+        cash (float): Current cash balance.
+        obs (TensorDict): Current observation of the environment.
+    Methods:
+        __init__(self, dataset, initial_cash=100000.0, device="cpu"):
+            Initializes the AdOptimizationEnv with the given dataset, initial cash, and device.
+        _reset(self, tensordict=None):
+            Resets the environment to the initial state and returns the initial observation.
+        _step(self, tensordict):
+            Takes a step in the environment using the given action and returns the next state, reward, and done flag.
+        _compute_reward(self, action, current_pki, action_idx):
+            Computes the reward based on the selected keyword's metrics.
+        _set_seed(self, seed: Optional[int]):
+            Sets the random seed for the environment.
+    """
+
     def __init__(self, dataset, initial_cash=100000.0, device="cpu"):
+        """
+        Initializes the digital advertising environment.
+        Args:
+            dataset (Any): The dataset containing keyword features and other relevant data.
+            initial_cash (float, optional): The initial amount of cash available for advertising. Defaults to 100000.0.
+            device (str, optional): The device to run the environment on, either "cpu" or "cuda". Defaults to "cpu".
+        Attributes:
+            initial_cash (float): The initial amount of cash available for advertising.
+            dataset (Any): The dataset containing keyword features and other relevant data.
+            num_features (int): The number of features in the dataset.
+            num_keywords (int): The number of keywords in the dataset.
+            action_spec (OneHot): The specification for the action space, which includes selecting a keyword to buy or choosing to buy nothing.
+            reward_spec (Unbounded): The specification for the reward space, which is unbounded and of type torch.float32.
+            observation_spec (Composite): The specification for the observation space, which includes keyword features, cash, holdings, and step count.
+            done_spec (Composite): The specification for the done space, which includes flags for done, terminated, and truncated states.
+        """
         super().__init__(device=device)
         self.initial_cash = initial_cash
         self.dataset = dataset
         self.num_features = len(feature_columns)
         self.num_keywords = get_entry_from_dataset(self.dataset, 0).shape[0]
-        #self.action_spec = Bounded(low=0, high=1, shape=(self.num_keywords,), dtype=torch.int, domain="discrete")
-        #self.action_spec = MultiCategorical(nvec=[2] * self.num_keywords) # 0 = hold, 1 = buy
-        #self.action_spec = Categorical
         self.action_spec = OneHot(n=self.num_keywords + 1) # select which one to buy or the last one to buy nothing
         self.reward_spec = Unbounded(shape=(1,), dtype=torch.float32)
         self.observation_spec = Composite(
@@ -180,6 +215,21 @@ class AdOptimizationEnv(EnvBase):
         self.reset()
 
     def _reset(self, tensordict=None):
+        """
+        Resets the environment to its initial state.
+        Args:
+            tensordict (TensorDict, optional): A TensorDict to be updated with the reset state. If None, a new TensorDict is created.
+        Returns:
+            TensorDict: A TensorDict containing the reset state of the environment, including:
+                - "done" (torch.tensor): A boolean tensor indicating if the episode is done.
+                - "observation" (TensorDict): A TensorDict containing the initial observation with:
+                    - "keyword_features" (torch.tensor): Features of the current keywords.
+                    - "cash" (torch.tensor): The initial cash balance.
+                    - "holdings" (torch.tensor): The initial holdings state for each keyword.
+                - "step_count" (torch.tensor): The current step count, initialized to 0.
+                - "terminated" (torch.tensor): A boolean tensor indicating if the episode is terminated.
+                - "truncated" (torch.tensor): A boolean tensor indicating if the episode is truncated.
+        """
         self.current_step = 0
         self.holdings = torch.zeros(self.num_keywords, dtype=torch.int, device=self.device) # 0 = not holding, 1 = holding keyword
         self.cash = self.initial_cash
@@ -217,6 +267,24 @@ class AdOptimizationEnv(EnvBase):
 
 
     def _step(self, tensordict):
+        """
+        Perform a single step in the environment using the provided tensor dictionary.
+        Args:
+            tensordict (TensorDict): A dictionary containing the current state and action.
+        Returns:
+            TensorDict: A dictionary containing the next state, reward, and termination status.
+        The function performs the following steps:
+        1. Extracts the action from the input tensor dictionary.
+        2. Determines the index of the selected keyword.
+        3. Retrieves the current entry from the dataset based on the current step.
+        4. Updates the holdings based on the selected action.
+        5. Calculates the reward based on the action taken.
+        6. Advances to the next time step and checks for termination conditions.
+        7. Retrieves the next keyword features for the subsequent state.
+        8. Updates the observation state with the new keyword features, cash balance, and holdings.
+        9. Updates the tensor dictionary with the new state, reward, and termination status.
+        10. Returns the updated tensor dictionary containing the next state, reward, and termination status.
+        """
         # Get the action from the input tensor dictionary. 
         action = tensordict["action"]
         #action_idx = action.argmax(dim=-1).item()  # Get the index of the selected keyword
@@ -300,63 +368,28 @@ class AdOptimizationEnv(EnvBase):
 # Initialize Environment
 env = AdOptimizationEnv(dataset, device=device)
 state_dim = env.num_features
-#action_dim = env.action_spec.n
 
 
-
-
-# In[ ]:
-
-
-env.action_spec
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class MultiStockQValueNet(nn.Module):
-    def __init__(self, input_dim, num_keywords, num_actions):
-        """
-        input_dim: Dimension of the input features (e.g., state dimension)
-        num_keywords: Number of keywords (each with its own discrete action space)
-        num_actions: Number of discrete actions per keyword (e.g., 2 for buy or wait)
-        """
-        super().__init__()
-        # Shared feature extraction backbone.
-        self.shared = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU()
-        )
-        # Create a separate head for each stock.
-        self.heads = nn.ModuleList([nn.Linear(128, num_actions) for _ in range(num_keywords)])
-        
-    def forward(self, x):
-        # x shape: (batch, input_dim)
-        features = self.shared(x)  # Shape: (batch, 128)
-        # Get Q-values for each stock
-        q_values = [head(features) for head in self.heads]  # Each has shape: (batch, num_actions)
-        # Stack to form a tensor with shape: (batch, num_stocks, num_actions)
-        q_values = torch.stack(q_values, dim=1)
-        return q_values
-
-# Example usage:
-# Let's assume:
-#   - Your environment's state dimension is 20.
-#   - You have 3 stocks.
-#   - For each stock, there are 3 possible actions.
-input_dim = 20
-num_stocks = 3
-num_actions = 3
-
-q_net = MultiStockQValueNet(input_dim, num_stocks, num_actions)
-dummy_input = torch.randn(4, input_dim)  # batch of 4
-print(q_net(dummy_input).shape)  # Expected shape: (4, 3, 3)
-
- # Create a preprocessing layer to flatten and combine inputs
 class FlattenInputs(nn.Module):
+    """
+    A custom PyTorch module to flatten and combine keyword features, cash, and holdings into a single tensor.
+    Methods
+    -------
+    forward(keyword_features, cash, holdings)
+        Flattens and combines the input tensors into a single tensor.
+    Parameters
+    ----------
+    keyword_features : torch.Tensor
+        A tensor containing keyword features with shape [batch, num_keywords, feature_dim] or [num_keywords, feature_dim].
+    cash : torch.Tensor
+        A tensor containing cash values with shape [batch] or [batch, 1] or a scalar.
+    holdings : torch.Tensor
+        A tensor containing holdings with shape [batch, num_keywords] or [num_keywords].
+    Returns
+    -------
+    torch.Tensor
+        A combined tensor with all inputs flattened and concatenated along the appropriate dimension.
+    """
     def forward(self, keyword_features, cash, holdings):
         # Check if we have a batch dimension
         has_batch = keyword_features.dim() > 2
@@ -398,13 +431,14 @@ class FlattenInputs(nn.Module):
             
         return combined
 
+
 flatten_module = TensorDictModule(
     FlattenInputs(),
     in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
     out_keys=["flattened_input"]
 )
 
-from torchrl.modules import EGreedyModule, MLP, QValueModule
+
 
 # Define dimensions
 feature_dim = len(feature_columns)
@@ -427,17 +461,10 @@ exploration_module = exploration_module.to(device)
 policy_explore = TensorDictSequential(policy, exploration_module).to(device)
 
 
-# In[ ]:
-
-
-value_mlp
-
-
-# In[ ]:
-
-
 from torchrl.collectors import SyncDataCollector
 from torchrl.data import LazyTensorStorage, ReplayBuffer
+from torch.optim import Adam
+from torchrl.objectives import DQNLoss, SoftUpdate
 
 init_rand_steps = 5000
 frames_per_batch = 100
@@ -451,20 +478,11 @@ collector = SyncDataCollector(
 )
 rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
 
-from torch.optim import Adam
 
-
-# In[ ]:
-
-
-from torchrl.objectives import DQNLoss, SoftUpdate
 #actor = QValueActor(value_net, in_keys=["observation"], action_space=spec)
 loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
 optim = Adam(loss.parameters(), lr=0.02)
 updater = SoftUpdate(loss, eps=0.99)
-
-
-# In[ ]:
 
 
 import time
@@ -518,7 +536,3 @@ Todo:
 - Implement the inference
 - Implement the optuna hyperparameter tuning
 '''''
-
-
-
-
