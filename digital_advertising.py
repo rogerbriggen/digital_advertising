@@ -537,6 +537,10 @@ import time
 total_count = 0
 total_episodes = 0
 t0 = time.time()
+# Evaluation parameters
+evaluation_frequency = 1000  # Run evaluation every 1000 steps
+best_test_reward = float('-inf')
+test_env = AdOptimizationEnv(dataset_test, device=device) # Create a test environment with the test dataset
 for i, data in enumerate(collector):
     # Write data in replay buffer
     print(f'data: step_count: {data["step_count"]}')
@@ -562,8 +566,52 @@ for i, data in enumerate(collector):
                 print(f"Max num steps: {max_length}, rb length {len(rb)}")
             total_count += data.numel()
             total_episodes += data["next", "done"].sum()
-    #if max_length > 200:  #that is still from the sample where 200 is a good value to balance the CartPole
-    #    break
+
+            # Evaluate on test data periodically
+            if total_count % evaluation_frequency == 0:
+                print(f"\n--- Testing model performance after {total_count} training steps ---")
+                # Use policy without exploration for evaluation
+                eval_policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec)).to(device)
+                
+                # Reset the test environment
+                test_td = test_env.reset()
+                total_test_reward = 0.0
+                done = False
+                max_test_steps = 100  # Limit test steps to avoid infinite loops
+                test_step = 0
+                
+                # Run the model on test environment until done or max steps reached
+                while not done and test_step < max_test_steps:
+                    # Forward pass through policy without exploration
+                    with torch.no_grad():
+                        test_td = eval_policy(test_td)
+                    
+                    # Step in the test environment
+                    test_td = test_env.step(test_td)
+                    reward = test_td["reward"].item()
+                    total_test_reward += reward
+                    done = test_td["done"].item()
+                    test_step += 1
+                
+                print(f"Test performance: Total reward = {total_test_reward}, Steps = {test_step}")
+                
+                # Save model if it's the best so far
+                if total_test_reward > best_test_reward:
+                    best_test_reward = total_test_reward
+                    print(f"New best model! Saving with reward: {best_test_reward}")
+
+                    # Create the directory if it doesn't exist
+                    import os
+                    os.makedirs('saves', exist_ok=True)
+                    torch.save({
+                        'policy_state_dict': policy.state_dict(),
+                        'optimizer_state_dict': optim.state_dict(),
+                        'total_steps': total_count,
+                        'test_reward': best_test_reward,
+                    }, 'saves/best_model.pt')
+                
+                print("--- Testing completed ---\n")
+    
     if total_count > 10_000:
         break
 
@@ -572,6 +620,7 @@ t1 = time.time()
 print(
     f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s."
 )
+print(f"Best test performance: {best_test_reward}")
 
 
 ''''
