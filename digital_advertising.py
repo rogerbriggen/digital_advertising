@@ -380,17 +380,15 @@ class AdOptimizationEnv(EnvBase):
             return 0.0
         
         reward = 0.0
-        # Iterate thourh all keywords
-        for i in range(self.num_keywords):
-            sample = current_pki.iloc[i]
-            cost = sample["ad_spend"]
-            ctr = sample["paid_ctr"]
-            if action[i] == True and cost > 5000:
-                reward += 1.0
-            elif action[i] == False and ctr > 0.15:
-                reward += 1.0
-            else:
-                reward -= 1.0
+        sample = current_pki.iloc[action_idx.item()]
+        #cost = sample["ad_spend"]
+        #ctr = sample["paid_ctr"]
+        ad_roas = sample["ad_roas"]
+        if ad_roas >= 5:  # the average roas in our csv is 4.8
+            reward += 1.0
+        else:
+            reward -= 1.0
+            
         return reward
 
     def _set_seed(self, seed: Optional[int]):
@@ -488,22 +486,42 @@ num_keywords = env.num_keywords
 action_dim = env.action_spec.shape[-1]
 total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
 
-value_mlp = MLP(in_features=total_input_dim, out_features=action_dim, num_cells=[128, 64])
+value_mlp = MLP(
+    in_features=total_input_dim, 
+    out_features=action_dim, 
+    num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
+    activation_class=nn.ReLU  # ReLU often performs better than Tanh
+)
+
+value_mlp_eval = MLP(
+    in_features=total_input_dim, 
+    out_features=action_dim, 
+    num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
+    activation_class=nn.ReLU  # ReLU often performs better than Tanh
+)
+
 
 flatten_module = TensorDictModule(
     FlattenInputs(),
     in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
     out_keys=["flattened_input"]
 )
+flatten_module_eval = TensorDictModule(
+    FlattenInputs(),
+    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
+    out_keys=["flattened_input"]
+)
 #value_net = TensorDictModule(value_mlp, in_keys=["observation"], out_keys=["action_value"])
 value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
+value_net_eval = TensorDictModule(value_mlp_eval, in_keys=["flattened_input"], out_keys=["action_value"])
 policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
+policy_eval = TensorDictSequential(flatten_module_eval, value_net_eval, QValueModule(spec=env.action_spec))
 
 # Make sure your policy is on the correct device
 policy = policy.to(device)
 
 exploration_module = EGreedyModule(
-    env.action_spec, annealing_num_steps=100_000, eps_init=0.5
+    env.action_spec, annealing_num_steps=100_000, eps_init=0.9, eps_end=0.01
 )
 exploration_module = exploration_module.to(device)
 policy_explore = TensorDictSequential(policy, exploration_module).to(device)
@@ -529,7 +547,8 @@ rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
 
 #actor = QValueActor(value_net, in_keys=["observation"], action_space=spec)
 loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-optim = Adam(loss.parameters(), lr=0.02)
+#optim = Adam(loss.parameters(), lr=0.02)
+optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay for regularization
 updater = SoftUpdate(loss, eps=0.99)
 
 
@@ -571,8 +590,9 @@ for i, data in enumerate(collector):
             if total_count % evaluation_frequency == 0:
                 print(f"\n--- Testing model performance after {total_count} training steps ---")
                 # Use policy without exploration for evaluation
-                eval_policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec)).to(device)
-                
+                policy_eval.load_state_dict(policy.state_dict()) # Just use the trained policy without exploration
+                policy_eval = policy_eval.to(device)
+                policy_eval.eval()
                 # Reset the test environment
                 test_td = test_env.reset()
                 total_test_reward = 0.0
@@ -584,7 +604,7 @@ for i, data in enumerate(collector):
                 while not done and test_step < max_test_steps:
                     # Forward pass through policy without exploration
                     with torch.no_grad():
-                        test_td = eval_policy(test_td)
+                        test_td = policy_eval(test_td)
                     
                     # Step in the test environment
                     test_td = test_env.step(test_td)
@@ -603,12 +623,14 @@ for i, data in enumerate(collector):
                     # Create the directory if it doesn't exist
                     import os
                     os.makedirs('saves', exist_ok=True)
+                    # Save the model
                     torch.save({
                         'policy_state_dict': policy.state_dict(),
                         'optimizer_state_dict': optim.state_dict(),
                         'total_steps': total_count,
                         'test_reward': best_test_reward,
                     }, 'saves/best_model.pt')
+                    print(policy.state_dict())
                 
                 print("--- Testing completed ---\n")
     
