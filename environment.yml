@@ -1,0 +1,42 @@
+name: torchRL
+channels:
+  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - ca-certificates=2024.12.31=haa95532_0
+  - openssl=3.0.15=h827c3e9_0
+  - pip=24.2=py39haa95532_0
+  - python=3.9.21=h8205438_1
+  - setuptools=75.1.0=py39haa95532_0
+  - sqlite=3.45.3=h2bbff1b_0
+  - tzdata=2025a=h04d1e81_0
+  - vc=14.40=haa95532_2
+  - vs2015_runtime=14.42.34433=h9531ae6_2
+  - wheel=0.44.0=py39haa95532_0
+  - pip:
+      - av==13.1.0
+      - cloudpickle==3.1.1
+      - filelock==3.17.0
+      - fsspec==2024.12.0
+      - gym==0.26.2
+      - gym-notices==0.0.8
+      - importlib-metadata==8.6.1
+      - jinja2==3.1.5
+      - markupsafe==3.0.2
+      - mpmath==1.3.0
+      - networkx==3.2.1
+      - numpy==1.26.4
+      - orjson==3.10.15
+      - packaging==24.2
+      - pillow==11.1.0
+      - pygame==2.1.0
+      - sympy==1.13.1
+      - tensordict==0.6.1
+      - torch==2.5.1
+      - torchrl==0.6.0
+      - torchvision==0.20.1
+      - typing-extensions==4.12.2
+      - zipp==3.21.0
+prefix: C:\Users\roger\anaconda3\envs\torchRL
