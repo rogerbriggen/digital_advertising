@@ -1,37 +1,56 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import numpy as np
-import pandas as pd
-import random
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datetime import datetime
-import os
-from collections import deque
+# IMPORTS SECTION
+# ------------------------------------------------------
+import torch                # PyTorch deep learning library
+import torch.nn as nn      # Neural network modules
+import torch.optim as optim # Optimization algorithms
+import numpy as np         # Numerical computing
+import pandas as pd        # Data manipulation and analysis
+import random              # Random number generation
+import matplotlib.pyplot as plt # Plotting
+import seaborn as sns      # Statistical data visualization
+from datetime import datetime # Date and time utilities
+import os                  # Operating system interfaces
+from collections import deque # Double-ended queue for replay buffer
 
-# Set device
+# SETUP SECTION
+# ------------------------------------------------------
+# Set device to GPU if available, otherwise CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Set random seeds for reproducibility
 def set_all_seeds(seed=42):
     """Set all random seeds for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    random.seed(seed)             # Python's built-in random
+    np.random.seed(seed)          # NumPy's random
+    torch.manual_seed(seed)       # PyTorch CPU
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed(seed)      # PyTorch GPU single device
+        torch.cuda.manual_seed_all(seed)  # PyTorch GPU multi-device
     return seed
 
-# Generate Realistic Synthetic Data
+# DATA GENERATION SECTION
+# ------------------------------------------------------
 def generate_synthetic_data(num_samples=1000):
-    """Generate synthetic advertising data with realistic correlations."""
+    """
+    Generate synthetic advertising data with realistic correlations.
+    This function creates a dataset that mimics real-world digital advertising metrics
+    with appropriate distributions and correlations between variables.
+    
+    Args:
+        num_samples (int): Number of data points to generate
+        
+    Returns:
+        pandas.DataFrame: DataFrame containing synthetic advertising data
+    """
+    # Generate a base difficulty distribution using beta distribution
+    # Beta distribution is good for values between 0 and 1 with controlled shape
     base_difficulty = np.random.beta(2.5, 3.5, num_samples)
+    
+    # Initialize data dictionary with random values for all features
     data = {
         "keyword": [f"Keyword_{i}" for i in range(num_samples)],
         "competitiveness": np.random.beta(2, 3, num_samples),
@@ -52,44 +71,51 @@ def generate_synthetic_data(num_samples=1000):
         "conversion_value": np.random.uniform(0, 10000, num_samples)
     }
     
-    # Add realistic correlations
+    # Add realistic correlations between features
+    # Difficulty score is influenced by competitiveness and base difficulty
     data["difficulty_score"] = 0.7 * data["competitiveness"] + 0.3 * base_difficulty
-    data["organic_rank"] = 1 + np.floor(9 * data["difficulty_score"] + np.random.normal(0, 1, num_samples).clip(-2, 2))
-    data["organic_rank"] = data["organic_rank"].clip(1, 10).astype(int)
     
-    # CTR follows a realistic distribution and correlates negatively with rank
-    base_ctr = np.random.beta(1.5, 10, num_samples)
-    rank_effect = (11 - data["organic_rank"]) / 10
-    data["organic_ctr"] = (base_ctr * rank_effect * 0.3).clip(0.01, 0.3)
+    # Organic rank (position in search results) depends on difficulty score
+    # Higher difficulty = worse rank (higher number)
+    data["organic_rank"] = 1 + np.floor(9 * data["difficulty_score"] + np.random.normal(0, 1, num_samples).clip(-2, 2))
+    data["organic_rank"] = data["organic_rank"].clip(1, 10).astype(int)  # Ensure ranks are integers between 1-10
+    
+    # CTR (Click-Through Rate) follows a beta distribution and negatively correlates with rank
+    # Better ranks (lower numbers) get higher CTRs
+    base_ctr = np.random.beta(1.5, 10, num_samples)  # Generate base CTR distribution
+    rank_effect = (11 - data["organic_rank"]) / 10   # Transform rank to 0.1-1.0 scale (higher for better ranks)
+    data["organic_ctr"] = (base_ctr * rank_effect * 0.3).clip(0.01, 0.3)  # Apply rank effect and scale to realistic range
     
     # Organic clicks based on CTR and a base impression count
+    # Using lognormal distribution for impressions (common in web traffic)
     base_impressions = np.random.lognormal(8, 1, num_samples).astype(int)
     data["organic_clicks"] = (base_impressions * data["organic_ctr"]).astype(int)
     
     # Paid CTR correlates with organic CTR but with more variance
     data["paid_ctr"] = (data["organic_ctr"] * np.random.normal(1, 0.3, num_samples)).clip(0.01, 0.25)
     
-    # Paid clicks
+    # Paid clicks calculation
     paid_impressions = np.random.lognormal(7, 1.2, num_samples).astype(int)
     data["paid_clicks"] = (paid_impressions * data["paid_ctr"]).astype(int)
     
-    # Cost per click higher for more competitive keywords
+    # Cost per click is higher for more competitive keywords
     data["cost_per_click"] = (0.5 + 9.5 * data["competitiveness"] * np.random.normal(1, 0.2, num_samples)).clip(0.1, 10)
     
-    # Ad spend based on CPC and clicks
+    # Ad spend calculation based on CPC and clicks
     data["ad_spend"] = data["paid_clicks"] * data["cost_per_click"]
     
-    # Conversion rate with realistic e-commerce distribution
+    # Conversion rate with realistic e-commerce distribution (typically low, around 1-3%)
     data["conversion_rate"] = np.random.beta(1.2, 15, num_samples).clip(0.01, 0.3)
     
-    # Ad conversions
+    # Ad conversions calculation
     data["ad_conversions"] = (data["paid_clicks"] * data["conversion_rate"]).astype(int)
     
-    # Conversion value with variance
+    # Conversion value with variance (using lognormal for realistic distribution of order values)
     base_value = np.random.lognormal(4, 1, num_samples)
     data["conversion_value"] = data["ad_conversions"] * base_value
     
-    # Cost per acquisition
+    # Cost per acquisition calculation
+    # Using np.errstate to ignore division by zero warnings
     with np.errstate(divide='ignore', invalid='ignore'):
         data["cost_per_acquisition"] = np.where(
             data["ad_conversions"] > 0, 
@@ -97,7 +123,7 @@ def generate_synthetic_data(num_samples=1000):
             500  # Default high CPA for no conversions
         ).clip(5, 500)
     
-    # ROAS (Return on Ad Spend)
+    # ROAS (Return on Ad Spend) calculation
     with np.errstate(divide='ignore', invalid='ignore'):
         data["ad_roas"] = np.where(
             data["ad_spend"] > 0,
@@ -105,31 +131,46 @@ def generate_synthetic_data(num_samples=1000):
             0
         ).clip(0.5, 5)
     
-    # Impression share (competitive keywords have lower share)
+    # Impression share - competitive keywords have lower share
     data["impression_share"] = (1 - 0.6 * data["competitiveness"] * np.random.normal(1, 0.2, num_samples)).clip(0.1, 1.0)
     
     return pd.DataFrame(data)
 
 # Define feature columns to use in the environment
+# These are the metrics that will be used as state representation for the RL agent
 feature_columns = [
-    "competitiveness", 
-    "difficulty_score", 
-    "organic_rank", 
-    "organic_clicks", 
-    "organic_ctr", 
-    "paid_clicks", 
-    "paid_ctr", 
-    "ad_spend", 
-    "ad_conversions", 
-    "ad_roas", 
-    "conversion_rate", 
-    "cost_per_click"
+    "competitiveness",    # How competitive the keyword is
+    "difficulty_score",   # Difficulty to rank for this keyword
+    "organic_rank",       # Position in organic search results
+    "organic_clicks",     # Number of clicks from organic search
+    "organic_ctr",        # Click-through rate for organic results
+    "paid_clicks",        # Number of clicks from paid ads
+    "paid_ctr",           # Click-through rate for paid ads
+    "ad_spend",           # Total money spent on ads
+    "ad_conversions",     # Number of conversions from ads
+    "ad_roas",            # Return on ad spend
+    "conversion_rate",    # Percentage of clicks that convert
+    "cost_per_click"      # Average cost per click
 ]
 
-# Simple Ad Environment
+# ENVIRONMENT SECTION
+# ------------------------------------------------------
 class AdEnv:
+    """
+    Digital Advertising Environment for Reinforcement Learning.
+    
+    This class implements a simplified environment that simulates
+    digital advertising decisions and outcomes. It follows the
+    standard RL environment interface with reset() and step() methods.
+    """
     def __init__(self, dataset):
-        # Ensure all numeric columns are float32
+        """
+        Initialize the environment with a dataset of advertising metrics.
+        
+        Args:
+            dataset (pandas.DataFrame): Dataset containing advertising metrics
+        """
+        # Ensure all numeric columns are float32 for compatibility with PyTorch
         self.dataset = dataset.copy()
         for col in feature_columns:
             self.dataset[col] = self.dataset[col].astype(np.float32)
@@ -140,7 +181,12 @@ class AdEnv:
         self.max_index = len(dataset) - 1
         
     def reset(self):
-        """Reset environment and return initial state."""
+        """
+        Reset environment and return initial state.
+        
+        Returns:
+            torch.Tensor: Initial state tensor
+        """
         self.current_index = 0
         sample = self.dataset.iloc[self.current_index]
         
@@ -151,7 +197,18 @@ class AdEnv:
         return state
     
     def step(self, action):
-        """Execute one step in the environment."""
+        """
+        Execute one step in the environment.
+        
+        Args:
+            action (int): Action to take (0=conservative, 1=aggressive)
+            
+        Returns:
+            tuple: (next_state, reward, done)
+                - next_state (torch.Tensor): Next state after taking action
+                - reward (float): Reward for taking action
+                - done (bool): Whether episode is done
+        """
         # Get current state
         sample = self.dataset.iloc[self.current_index]
         
@@ -172,43 +229,120 @@ class AdEnv:
         return next_state, reward, done
     
     def _compute_reward(self, action, sample):
-        """Compute reward based on action and current state."""
+        """
+        Compute reward based on action and current state.
+        
+        Args:
+            action (int): Action taken (0=conservative, 1=aggressive)
+            sample (pandas.Series): Current state
+            
+        Returns:
+            float: Reward value
+        """
         cost = float(sample["ad_spend"])
         ctr = float(sample["paid_ctr"])
         revenue = float(sample["conversion_value"])
         roas = revenue / cost if cost > 0 else 0.0
         
         if action == 1:  # Aggressive strategy
+            # For aggressive strategy:
+            # - High reward if high spend WITH high ROAS (good performance)
+            # - Moderate reward if profitable (ROAS > 1)
+            # - Penalty if not profitable
             reward = 2.0 if (cost > 5000 and roas > 2.0) else (1.0 if roas > 1.0 else -1.0)
         else:  # Conservative strategy
+            # For conservative strategy:
+            # - Reward for high CTR (good engagement)
+            # - Small penalty otherwise
             reward = 1.0 if ctr > 0.15 else -0.5
         
         return reward
 
-# Simple Q-Network
+# MODEL SECTION
+# ------------------------------------------------------
 class QNetwork(nn.Module):
+    """
+    Q-Network for Deep Q-Learning.
+    
+    A simple neural network that predicts Q-values for each action
+    given a state input.
+    """
     def __init__(self, input_size, output_size):
+        """
+        Initialize Q-Network.
+        
+        Args:
+            input_size (int): Size of the input state vector
+            output_size (int): Number of possible actions
+        """
         super(QNetwork, self).__init__()
-        self.fc1 = nn.Linear(input_size, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, output_size)
+        self.fc1 = nn.Linear(input_size, 64)   # First fully connected layer
+        self.fc2 = nn.Linear(64, 64)           # Second fully connected layer
+        self.fc3 = nn.Linear(64, output_size)  # Output layer (one value per action)
         
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = self.fc3(x)
+        """
+        Forward pass through the network.
+        
+        Args:
+            x (torch.Tensor): Input state tensor
+            
+        Returns:
+            torch.Tensor: Q-values for each action
+        """
+        x = torch.relu(self.fc1(x))  # Apply ReLU activation after first layer
+        x = torch.relu(self.fc2(x))  # Apply ReLU activation after second layer
+        x = self.fc3(x)              # Linear output for Q-values
         return x
 
-# Experience Replay Buffer
+# EXPERIENCE REPLAY BUFFER
+# ------------------------------------------------------
 class ReplayBuffer:
+    """
+    Experience Replay Buffer for storing and sampling transitions.
+    
+    Stores (state, action, reward, next_state, done) tuples and
+    allows random sampling for experience replay in DQN training.
+    """
     def __init__(self, capacity):
-        self.buffer = deque(maxlen=capacity)
+        """
+        Initialize buffer with fixed capacity.
+        
+        Args:
+            capacity (int): Maximum number of transitions to store
+        """
+        self.buffer = deque(maxlen=capacity)  # Fixed-size buffer
     
     def add(self, state, action, reward, next_state, done):
+        """
+        Add a new transition to the buffer.
+        
+        Args:
+            state (torch.Tensor): Current state
+            action (int): Action taken
+            reward (float): Reward received
+            next_state (torch.Tensor): Next state
+            done (bool): Whether episode ended
+        """
         self.buffer.append((state, action, reward, next_state, done))
     
     def sample(self, batch_size):
-        states, actions, rewards, next_states, dones = zip(*random.sample(self.buffer, batch_size))
+        """
+        Sample a random batch of transitions.
+        
+        Args:
+            batch_size (int): Number of transitions to sample
+            
+        Returns:
+            tuple: Batch of (states, actions, rewards, next_states, dones)
+        """
+        # Sample random transitions
+        batch = random.sample(self.buffer, batch_size)
+        
+        # Unzip the batch into separate components
+        states, actions, rewards, next_states, dones = zip(*batch)
+        
+        # Convert to appropriate tensor types and move to device
         return (torch.stack(states), 
                 torch.tensor(actions, dtype=torch.long, device=device), 
                 torch.tensor(rewards, dtype=torch.float, device=device),
@@ -216,62 +350,128 @@ class ReplayBuffer:
                 torch.tensor(dones, dtype=torch.bool, device=device))
     
     def __len__(self):
+        """Return current buffer size."""
         return len(self.buffer)
 
-# Agent with epsilon-greedy exploration
+# AGENT SECTION
+# ------------------------------------------------------
 class DQNAgent:
+    """
+    Deep Q-Network Agent with epsilon-greedy exploration.
+    
+    Implements the DQN algorithm with experience replay and
+    target network for stable learning.
+    """
     def __init__(self, state_size, action_size, learning_rate=0.001):
+        """
+        Initialize DQN agent.
+        
+        Args:
+            state_size (int): Dimension of state space
+            action_size (int): Number of possible actions
+            learning_rate (float): Learning rate for optimizer
+        """
         self.state_size = state_size
         self.action_size = action_size
+        
+        # Policy network (main network for taking actions)
         self.policy_net = QNetwork(state_size, action_size).to(device)
+        
+        # Target network (for stable learning targets)
         self.target_net = QNetwork(state_size, action_size).to(device)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.load_state_dict(self.policy_net.state_dict())  # Initialize with same weights
+        
+        # Optimizer for updating policy network
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
-        self.epsilon = 1.0
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995
+        
+        # Exploration parameters
+        self.epsilon = 1.0        # Initial exploration rate (100%)
+        self.epsilon_min = 0.05   # Minimum exploration rate (5%)
+        self.epsilon_decay = 0.995  # Decay rate per episode
+        
+        # Discount factor for future rewards
         self.gamma = 0.99
         
     def select_action(self, state, eval_mode=False):
+        """
+        Select action using epsilon-greedy policy.
+        
+        Args:
+            state (torch.Tensor): Current state
+            eval_mode (bool): If True, use greedy policy (no exploration)
+            
+        Returns:
+            int: Selected action
+        """
+        # Use greedy policy if in evaluation mode or random number > epsilon
         if eval_mode or random.random() > self.epsilon:
             with torch.no_grad():
+                # Choose action with highest Q-value
                 return self.policy_net(state).argmax().item()
         else:
+            # Choose random action for exploration
             return random.randrange(self.action_size)
     
     def update_epsilon(self):
+        """Update exploration rate by decay factor."""
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
     
     def update_target_network(self):
+        """Copy weights from policy network to target network."""
         self.target_net.load_state_dict(self.policy_net.state_dict())
     
     def train(self, batch):
+        """
+        Train the agent using a batch of experiences.
+        
+        Args:
+            batch (tuple): Batch of (states, actions, rewards, next_states, dones)
+            
+        Returns:
+            float: Loss value
+        """
         states, actions, rewards, next_states, dones = batch
         
-        # Get current Q values
+        # Get current Q values for actions taken
         current_q = self.policy_net(states).gather(1, actions.unsqueeze(1))
         
-        # Compute target Q values
+        # Compute target Q values using target network (Double DQN approach)
         with torch.no_grad():
             next_q = self.target_net(next_states).max(1)[0]
+            # if done, use only the immediate reward
             target_q = rewards + self.gamma * next_q * (~dones)
         
-        # Compute loss
+        # Compute MSE loss between current and target Q values
         loss = nn.MSELoss()(current_q.squeeze(), target_q)
         
-        # Optimize
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        # Optimize the policy network
+        self.optimizer.zero_grad()  # Clear previous gradients
+        loss.backward()            # Compute gradients
+        self.optimizer.step()      # Update weights
         
         return loss.item()
 
-# Training function
+# TRAINING FUNCTION
+# ------------------------------------------------------
 def train_dqn(env, agent, num_episodes=500, batch_size=64, target_update=10, buffer_size=10000):
+    """
+    Train a DQN agent in the advertising environment.
+    
+    Args:
+        env (AdEnv): Advertising environment
+        agent (DQNAgent): DQN agent to train
+        num_episodes (int): Number of training episodes
+        batch_size (int): Batch size for training
+        target_update (int): Steps between target network updates
+        buffer_size (int): Size of replay buffer
+        
+    Returns:
+        dict: Training metrics including rewards, losses, and epsilon values
+    """
     replay_buffer = ReplayBuffer(buffer_size)
-    rewards_history = []
-    losses = []
-    epsilon_values = []
+    rewards_history = []   # Track episode rewards
+    losses = []            # Track training losses
+    epsilon_values = []    # Track exploration rate
     
     print("Starting training...")
     for episode in range(num_episodes):
@@ -288,13 +488,13 @@ def train_dqn(env, agent, num_episodes=500, batch_size=64, target_update=10, buf
             # Take action
             next_state, reward, done = env.step(action)
             
-            # Store transition
+            # Store transition in replay buffer
             replay_buffer.add(state, action, reward, next_state, done)
             
             # Update state
             state = next_state
             
-            # Train agent
+            # Train agent if enough samples in buffer
             if len(replay_buffer) > batch_size:
                 batch = replay_buffer.sample(batch_size)
                 loss = agent.train(batch)
@@ -303,7 +503,7 @@ def train_dqn(env, agent, num_episodes=500, batch_size=64, target_update=10, buf
             
             episode_reward += reward
             
-            # Update target network
+            # Update target network periodically
             if step_count % target_update == 0 and step_count > 0:
                 agent.update_target_network()
         
@@ -329,8 +529,20 @@ def train_dqn(env, agent, num_episodes=500, batch_size=64, target_update=10, buf
         "epsilon_values": epsilon_values
     }
 
-# Evaluation function
+# EVALUATION FUNCTION
+# ------------------------------------------------------
 def evaluate_agent(env, agent, num_episodes=10):
+    """
+    Evaluate a trained agent in the advertising environment.
+    
+    Args:
+        env (AdEnv): Advertising environment
+        agent (DQNAgent): Trained DQN agent to evaluate
+        num_episodes (int): Number of evaluation episodes
+        
+    Returns:
+        dict: Evaluation metrics
+    """
     total_reward = 0
     episode_lengths = []
     action_counts = {0: 0, 1: 0}  # 0=conservative, 1=aggressive
@@ -347,7 +559,7 @@ def evaluate_agent(env, agent, num_episodes=10):
         done = False
         
         while not done:
-            # Get action using greedy policy
+            # Get action using greedy policy (no exploration)
             action = agent.select_action(state, eval_mode=True)
             
             # Record state
@@ -361,6 +573,7 @@ def evaluate_agent(env, agent, num_episodes=10):
             decisions.append((action, reward))
             rewards.append(reward)
             
+            # Separate rewards by action type for analysis
             if action == 0:
                 conservative_rewards.append(reward)
             else:
@@ -399,9 +612,20 @@ def evaluate_agent(env, agent, num_episodes=10):
         "success_rate": success_rate
     }
 
-# Visualization functions
+# VISUALIZATION FUNCTIONS
+# ------------------------------------------------------
 def visualize_training_progress(metrics, output_dir="plots", window_size=20):
-    """Visualize training metrics including rewards, losses, and exploration rate."""
+    """
+    Visualize training metrics including rewards, losses, and exploration rate.
+    
+    Args:
+        metrics (dict): Training metrics
+        output_dir (str): Directory to save plots
+        window_size (int): Window size for moving average
+        
+    Returns:
+        str: Path to saved plot
+    """
     os.makedirs(output_dir, exist_ok=True)
     
     rewards = metrics["rewards"]
@@ -420,7 +644,7 @@ def visualize_training_progress(metrics, output_dir="plots", window_size=20):
     axes[0].plot(rewards, alpha=0.3, color='blue', label="Episode Rewards")
     
     if len(rewards) >= window_size:
-        # Add smoothed rewards line
+        # Add smoothed rewards line using moving average
         smoothed_rewards = []
         for i in range(len(rewards) - window_size + 1):
             smoothed_rewards.append(np.mean(rewards[i:i+window_size]))
@@ -467,7 +691,17 @@ def visualize_training_progress(metrics, output_dir="plots", window_size=20):
     return plot_path
 
 def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
-    """Create visualizations for evaluation metrics."""
+    """
+    Create visualizations for evaluation metrics.
+    
+    Args:
+        metrics (dict): Evaluation metrics
+        feature_columns (list): List of feature column names
+        output_dir (str): Directory to save plots
+        
+    Returns:
+        str: Path to saved plot
+    """
     os.makedirs(output_dir, exist_ok=True)
     
     sns.set(style="whitegrid")
@@ -475,7 +709,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     fig = plt.figure(figsize=(18, 12))
     fig.suptitle("Ad Optimization RL Agent Evaluation", fontsize=16)
     
-    # 1. Action Distribution
+    # 1. Action Distribution - Shows proportion of conservative vs aggressive actions
     ax1 = fig.add_subplot(2, 3, 1)
     actions = ["Conservative", "Aggressive"]
     action_counts = [metrics["action_distribution"].get(0, 0), metrics["action_distribution"].get(1, 0)]
@@ -483,7 +717,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     ax1.set_title("Action Distribution")
     ax1.set_ylabel("Frequency")
     
-    # 2. Average Reward by Action Type
+    # 2. Average Reward by Action Type - Compares performance of each strategy
     ax2 = fig.add_subplot(2, 3, 2)
     ax2.bar(["Conservative", "Aggressive"], 
             [metrics["avg_conservative_reward"], metrics["avg_aggressive_reward"]], 
@@ -491,7 +725,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     ax2.set_title("Average Reward by Action Type")
     ax2.set_ylabel("Average Reward")
     
-    # 3. Feature Correlations with Decisions
+    # 3. Feature Correlations with Decisions - Shows which features influenced action choices
     ax3 = fig.add_subplot(2, 3, 3)
     states = np.array(metrics["states"])
     decisions = np.array([a for a, _ in metrics["decisions"]])
@@ -499,6 +733,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     correlations = []
     feature_names = []
     
+    # Calculate correlations between features and decisions
     if states.size > 0 and decisions.size > 0 and states.shape[1] == len(feature_columns):
         for i, feature in enumerate(feature_columns):
             try:
@@ -510,7 +745,8 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
                 pass
     
     if correlations:
-        sorted_indices = np.argsort(np.abs(correlations))[::-1][:5]  # Top 5 features
+        # Show top 5 most influential features
+        sorted_indices = np.argsort(np.abs(correlations))[::-1][:5]
         top_features = [feature_names[i] for i in sorted_indices]
         top_correlations = [correlations[i] for i in sorted_indices]
         
@@ -521,7 +757,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
         ax3.text(0.5, 0.5, "Insufficient data for correlation analysis", 
                 ha='center', va='center')
     
-    # 4. Reward Distribution
+    # 4. Reward Distribution - Shows overall distribution of rewards
     ax4 = fig.add_subplot(2, 3, 4)
     if metrics["rewards"]:
         sns.histplot(metrics["rewards"], kde=True, ax=ax4)
@@ -531,19 +767,22 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     else:
         ax4.text(0.5, 0.5, "No reward data available", ha='center', va='center')
     
-    # 5. Decision Quality Matrix
+    # 5. Decision Quality Matrix - Heatmap showing how often each action leads to good/poor outcomes
     ax5 = fig.add_subplot(2, 3, 5)
     decision_quality = np.zeros((2, 2))
     
+    # Count instances of (action, outcome quality) pairs
     for action, reward in metrics["decisions"]:
-        quality = 1 if reward > 0 else 0
+        quality = 1 if reward > 0 else 0  # 1 = good outcome (positive reward), 0 = poor outcome
         if action < 2:  # Ensure action is either 0 or 1
             decision_quality[action, quality] += 1
     
+    # Normalize by row to show percentages
     row_sums = decision_quality.sum(axis=1, keepdims=True)
     row_sums = np.where(row_sums == 0, 1, row_sums)  # Avoid division by zero
     decision_quality_norm = decision_quality / row_sums
     
+    # Create heatmap
     sns.heatmap(decision_quality_norm, annot=True, fmt=".2f", cmap="YlGnBu",
                 xticklabels=["Poor", "Good"], 
                 yticklabels=["Conservative", "Aggressive"],
@@ -552,7 +791,7 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     ax5.set_ylabel("Action")
     ax5.set_xlabel("Decision Quality")
     
-    # 6. Success Rate Over Time
+    # 6. Success Rate Over Time - Shows if agent improves over time
     ax6 = fig.add_subplot(2, 3, 6)
     if metrics["decisions"]:
         # Calculate moving success rate
@@ -580,9 +819,22 @@ def visualize_evaluation(metrics, feature_columns, output_dir="plots"):
     
     return plot_path
 
+# MAIN EXECUTION FUNCTION
+# ------------------------------------------------------
 def main():
-    """Main function to run the training and evaluation pipeline."""
-    # Create output directory with timestamp
+    """
+    Main function to run the training and evaluation pipeline.
+    
+    This function:
+    1. Creates output directories
+    2. Generates synthetic data
+    3. Initializes environment and agent
+    4. Trains the agent
+    5. Evaluates the agent
+    6. Creates visualizations
+    7. Saves results
+    """
+    # Create output directory with timestamp for unique run identification
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = f"ad_optimization_results_{timestamp}"
     os.makedirs(run_dir, exist_ok=True)
@@ -592,47 +844,47 @@ def main():
     print(f"Starting digital advertising optimization pipeline...")
     print(f"Results will be saved to: {run_dir}")
     
-    # Set random seeds
+    # Set random seeds for reproducibility
     set_all_seeds(42)
     
-    # Generate or load dataset
+    # Generate synthetic dataset
     print("Generating synthetic dataset...")
-    dataset = generate_synthetic_data(1000)
+    dataset = generate_synthetic_data(1000)  # Generate 1000 samples
     dataset_path = f"{run_dir}/synthetic_ad_data.csv"
     dataset.to_csv(dataset_path, index=False)
     print(f"Synthetic dataset saved to {dataset_path}")
     
-    # Print dataset summary
+    # Print dataset summary statistics
     print("\nDataset summary:")
     print(f"Shape: {dataset.shape}")
     print("\nFeature stats:")
     print(dataset[feature_columns].describe().to_string())
     
-    # Create environment
+    # Create environment using the generated dataset
     env = AdEnv(dataset)
     
-    # Create agent
+    # Create RL agent
     agent = DQNAgent(state_size=len(feature_columns), action_size=2, learning_rate=0.001)
     
-    # Train agent
+    # Train the agent
     print("\nTraining RL agent...")
     training_metrics = train_dqn(env, agent, num_episodes=200, batch_size=64)
     
     # Check if we have training data to plot
     if training_metrics["rewards"]:
-        # Save training metrics plot
+        # Save training metrics visualization
         print("Generating training visualization...")
         training_plot_path = visualize_training_progress(training_metrics, output_dir=plot_dir)
         print(f"Training progress plot saved to {training_plot_path}")
     else:
         print("Warning: No training rewards collected, skipping training visualization")
     
-    # Evaluate agent
+    # Evaluate the trained agent
     print("Evaluating trained agent...")
     eval_episodes = 10
     eval_metrics = evaluate_agent(env, agent, num_episodes=eval_episodes)
     
-    # Save evaluation metrics
+    # Save evaluation metrics to text file for reference
     eval_metrics_path = f"{run_dir}/evaluation_metrics.txt"
     with open(eval_metrics_path, "w") as f:
         f.write(f"Average Reward: {eval_metrics['avg_reward']:.4f}\n")
@@ -642,12 +894,12 @@ def main():
         f.write(f"Average Conservative Reward: {eval_metrics['avg_conservative_reward']:.4f}\n")
         f.write(f"Average Aggressive Reward: {eval_metrics['avg_aggressive_reward']:.4f}\n")
     
-    # Visualize evaluation
+    # Create evaluation visualizations
     print("Generating evaluation visualization...")
     eval_plot_path = visualize_evaluation(eval_metrics, feature_columns, output_dir=plot_dir)
     print(f"Evaluation plot saved to {eval_plot_path}")
     
-    # Save model
+    # Save trained model
     model_path = f"{run_dir}/ad_optimization_model.pt"
     torch.save({
         'model_state_dict': agent.policy_net.state_dict(),
@@ -659,5 +911,6 @@ def main():
     print(f"Pipeline completed successfully. All results saved to {run_dir}")
     return agent, training_metrics, eval_metrics
 
+# Script entry point
 if __name__ == "__main__":
     main()
