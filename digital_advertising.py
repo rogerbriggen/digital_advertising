@@ -431,6 +431,7 @@ class FlattenInputs(nn.Module):
 
 
 
+
 # Select the best device for our machine
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -438,6 +439,8 @@ device = torch.device(
     "cpu"
 )
 print(device)
+
+feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
 
 # Load the organized dataset
 dataset = pd.read_csv('data/organized_dataset.csv')
@@ -447,12 +450,10 @@ env = AdOptimizationEnv(dataset, device=device)
 state_dim = env.num_features
 
 # Define data and dimensions
-feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
-
 feature_dim = len(feature_columns)
 num_keywords = env.num_keywords
 action_dim = env.action_spec.shape[-1]
-total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features + cash + holdings
+total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
 
 value_mlp = MLP(in_features=total_input_dim, out_features=action_dim, num_cells=[128, 64])
 
