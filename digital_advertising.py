@@ -577,10 +577,10 @@ print(
 ''''
 Todo:
 - Clean up the code
-- Split training and test data
-- Implement tensorbaord
-- Implement the visualization
-- Implement the saving of the model
-- Implement the inference
-- Implement the optuna hyperparameter tuning
+- Split training and test data (RB)
+- Implement tensorbaord (PK, MAC)
+- Implement the visualization (see tensorboard) (EO)
+- Implement the saving of the model (RB)
+- Implement the inference (RB)
+- Implement the optuna hyperparameter tuning (UT)
 '''''
