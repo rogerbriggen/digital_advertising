@@ -1,168 +1,202 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import pandas as pd
 import random
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import os
+from collections import deque
+import time
+
+# TorchRL imports
 from torchrl.envs import EnvBase
 from torchrl.data.replay_buffers import TensorDictReplayBuffer
-from torchrl.objectives import DQNLoss
+from torchrl.objectives import DQNLoss, SoftUpdate
 from torchrl.collectors import SyncDataCollector
 from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModule
+from tensordict.nn import TensorDictModule, TensorDictSequential
 from typing import Optional
 from torchrl.modules import EGreedyModule, MLP, QValueModule
-from torchrl.data import OneHot, Bounded, Unbounded, Binary, MultiCategorical, Composite, UnboundedContinuous
+from torchrl.data import OneHot, Bounded, Unbounded, Binary, MultiCategorical, Composite
+from torchrl.data import LazyTensorStorage, ReplayBuffer
 
+# Set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-from tensordict.nn import TensorDictModule, TensorDictSequential
-
-
-# Specify device explicitly
-device = torch.device("cpu")  # or "cuda" if you have GPU support
-
-# Generate Realistic Synthetic Data
-#Platzierung:
-#Organisch: Erscheint aufgrund des Suchalgorithmus, ohne Bezahlung.
-#Paid: Wird aufgrund einer Werbekampagne oder bezahlten Platzierung angezeigt.
-#Kosten:
-#Organisch: Es fallen in der Regel keine direkten Kosten pro Klick oder Impression an.
-#Paid: Werbetreibende zahlen oft pro Klick (CPC) oder pro Impression (CPM = pro Sichtkontakt, unabhängig ob jemand klickt oder nicht).
-def generate_synthetic_data(num_samples=1000):
-    data = {
-        "keyword": [f"Keyword_{i}" for i in range(num_samples)],  # Eindeutiger Name oder Identifier für das Keyword
-        "competitiveness": np.random.uniform(0, 1, num_samples),     # Wettbewerbsfähigkeit des Keywords (Wert zwischen 0 und 1). Je mehr Leute das Keyword wollen, desto näher bei 1 und somit desto teurer.
-        "difficulty_score": np.random.uniform(0, 1, num_samples),      # Schwierigkeitsgrad des Keywords organisch gute Platzierung zu erreichen (Wert zwischen 0 und 1). 1 = mehr Aufwand und Optimierung nötig.
-        "organic_rank": np.random.randint(1, 11, num_samples),         # Organischer Rang, z.B. Position in Suchergebnissen (1 bis 10)
-        "organic_clicks": np.random.randint(50, 5000, num_samples),    # Anzahl der Klicks auf organische Suchergebnisse
-        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),      # Klickrate (CTR) für organische Suchergebnisse
-        "paid_clicks": np.random.randint(10, 3000, num_samples),       # Anzahl der Klicks auf bezahlte Anzeigen
-        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),        # Klickrate (CTR) für bezahlte Anzeigen
-        "ad_spend": np.random.uniform(10, 10000, num_samples),         # Werbebudget bzw. Ausgaben für Anzeigen
-        "ad_conversions": np.random.randint(0, 500, num_samples),      # Anzahl der Conversions (Erfolge) von Anzeigen
-        "ad_roas": np.random.uniform(0.5, 5, num_samples),             # Return on Ad Spend (ROAS) für Anzeigen, wobei Werte < 1 Verlust anzeigen
-        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),    # Conversion-Rate (Prozentsatz der Besucher, die konvertieren)
-        "cost_per_click": np.random.uniform(0.1, 10, num_samples),     # Kosten pro Klick (CPC)
-        "cost_per_acquisition": np.random.uniform(5, 500, num_samples),  # Kosten pro Akquisition (CPA)
-        "previous_recommendation": np.random.choice([0, 1], size=num_samples),  # Frühere Empfehlung (0 = nein, 1 = ja)
-        "impression_share": np.random.uniform(0.1, 1.0, num_samples),  # Anteil an Impressionen (Sichtbarkeit der Anzeige) im Vergleich mit allen anderen die dieses Keyword wollen
-        "conversion_value": np.random.uniform(0, 10000, num_samples)   # Monetärer Wert der Conversions (Ein monetärer Wert, der den finanziellen Nutzen aus den erzielten Conversions widerspiegelt. Dieser Wert gibt an, wie viel Umsatz oder Gewinn durch die Conversions generiert wurde – je höher der Wert, desto wertvoller sind die Conversions aus Marketingsicht.)
-    }
-    return pd.DataFrame(data)
-
-test = generate_synthetic_data(10)
-test.head()
-print(test.shape)
-print(test.columns)
-
-
-def getKeywords():
-    return ["investments", "stocks", "crypto", "cryptocurrency", "bitcoin", "real estate", "gold", "bonds", "broker", "finance", "trading", "forex", "etf", "investment fund", "investment strategy", "investment advice", "investment portfolio", "investment opportunities", "investment options", "investment calculator", "investment plan", "investment account", "investment return", "investment risk", "investment income", "investment growth", "investment loss", "investment profit", "investment return calculator", "investment return formula", "investment return rate"]
-
-
-def generateData():
-    seed = 42  # or any integer of your choice
-    random.seed(seed)      # Sets the seed for the Python random module
-    np.random.seed(seed)   # Sets the seed for NumPy's random generator
-    torch.manual_seed(seed)  # Sets the seed for PyTorch
-
-    # If you're using CUDA as well, you may also set:
+# Set random seeds for reproducibility
+def set_all_seeds(seed=42):
+    """Set all random seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    return seed
+
+# Generate Realistic Synthetic Data with improved correlations from Roger's script
+def generate_synthetic_data(num_samples=1000):
+    """Generate synthetic advertising data with realistic correlations."""
+    base_difficulty = np.random.beta(2.5, 3.5, num_samples)
+    data = {
+        "keyword": [f"Keyword_{i}" for i in range(num_samples)],
+        "competitiveness": np.random.beta(2, 3, num_samples),
+        "difficulty_score": np.random.uniform(0, 1, num_samples),
+        "organic_rank": np.random.randint(1, 11, num_samples),
+        "organic_clicks": np.random.randint(50, 5000, num_samples),
+        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),
+        "paid_clicks": np.random.randint(10, 3000, num_samples),
+        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),
+        "ad_spend": np.random.uniform(10, 10000, num_samples),
+        "ad_conversions": np.random.randint(0, 500, num_samples),
+        "ad_roas": np.random.uniform(0.5, 5, num_samples),
+        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),
+        "cost_per_click": np.random.uniform(0.1, 10, num_samples),
+        "cost_per_acquisition": np.random.uniform(5, 500, num_samples),
+        "previous_recommendation": np.random.choice([0, 1], size=num_samples),
+        "impression_share": np.random.uniform(0.1, 1.0, num_samples),
+        "conversion_value": np.random.uniform(0, 10000, num_samples)
+    }
     
-    # Generate synthetic data
-    # Do it 1000 times
-    dataset = pd.DataFrame()
-    for i in range(1000):
-        # append to dataset
-        dataset = generate_synthetic_data(len(getKeywords()))
+    # Add realistic correlations
+    data["difficulty_score"] = 0.7 * data["competitiveness"] + 0.3 * base_difficulty
+    data["organic_rank"] = 1 + np.floor(9 * data["difficulty_score"] + np.random.normal(0, 1, num_samples).clip(-2, 2))
+    data["organic_rank"] = data["organic_rank"].clip(1, 10).astype(int)
+    
+    # CTR follows a realistic distribution and correlates negatively with rank
+    base_ctr = np.random.beta(1.5, 10, num_samples)
+    rank_effect = (11 - data["organic_rank"]) / 10
+    data["organic_ctr"] = (base_ctr * rank_effect * 0.3).clip(0.01, 0.3)
+    
+    # Organic clicks based on CTR and a base impression count
+    base_impressions = np.random.lognormal(8, 1, num_samples).astype(int)
+    data["organic_clicks"] = (base_impressions * data["organic_ctr"]).astype(int)
+    
+    # Paid CTR correlates with organic CTR but with more variance
+    data["paid_ctr"] = (data["organic_ctr"] * np.random.normal(1, 0.3, num_samples)).clip(0.01, 0.25)
+    
+    # Paid clicks
+    paid_impressions = np.random.lognormal(7, 1.2, num_samples).astype(int)
+    data["paid_clicks"] = (paid_impressions * data["paid_ctr"]).astype(int)
+    
+    # Cost per click higher for more competitive keywords
+    data["cost_per_click"] = (0.5 + 9.5 * data["competitiveness"] * np.random.normal(1, 0.2, num_samples)).clip(0.1, 10)
+    
+    # Ad spend based on CPC and clicks
+    data["ad_spend"] = data["paid_clicks"] * data["cost_per_click"]
+    
+    # Conversion rate with realistic e-commerce distribution
+    data["conversion_rate"] = np.random.beta(1.2, 15, num_samples).clip(0.01, 0.3)
+    
+    # Ad conversions
+    data["ad_conversions"] = (data["paid_clicks"] * data["conversion_rate"]).astype(int)
+    
+    # Conversion value with variance
+    base_value = np.random.lognormal(4, 1, num_samples)
+    data["conversion_value"] = data["ad_conversions"] * base_value
+    
+    # Cost per acquisition
+    with np.errstate(divide='ignore', invalid='ignore'):
+        data["cost_per_acquisition"] = np.where(
+            data["ad_conversions"] > 0, 
+            data["ad_spend"] / data["ad_conversions"], 
+            500  # Default high CPA for no conversions
+        ).clip(5, 500)
+    
+    # ROAS (Return on Ad Spend)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        data["ad_roas"] = np.where(
+            data["ad_spend"] > 0,
+            data["conversion_value"] / data["ad_spend"],
+            0
+        ).clip(0.5, 5)
+    
+    # Impression share (competitive keywords have lower share)
+    data["impression_share"] = (1 - 0.6 * data["competitiveness"] * np.random.normal(1, 0.2, num_samples)).clip(0.1, 1.0)
+    
+    return pd.DataFrame(data)
+
+# Define feature columns to use in the environment
+feature_columns = [
+    "competitiveness", 
+    "difficulty_score", 
+    "organic_rank", 
+    "organic_clicks", 
+    "organic_ctr", 
+    "paid_clicks", 
+    "paid_ctr", 
+    "ad_spend", 
+    "ad_conversions", 
+    "ad_roas", 
+    "conversion_rate", 
+    "cost_per_click"
+]
+
+# Utility function to get real-world keywords
+def get_keywords():
+    return [
+        "investments", "stocks", "crypto", "cryptocurrency", "bitcoin", 
+        "real estate", "gold", "bonds", "broker", "finance", "trading", 
+        "forex", "etf", "investment fund", "investment strategy", 
+        "investment advice", "investment portfolio", "investment opportunities", 
+        "investment options", "investment calculator", "investment plan", 
+        "investment account", "investment return", "investment risk", 
+        "investment income", "investment growth", "investment loss", 
+        "investment profit", "investment return calculator", 
+        "investment return formula", "investment return rate"
+    ]
+
+# Function to get a batch of data for multiple keywords
+def get_entry_from_dataset(df, index, keyword_count=None):
+    if keyword_count is None:
+        # Count unique keywords on first call
+        if not hasattr(get_entry_from_dataset, "unique_keywords"):
+            seen_keywords = set()
+            for i, row in df.iterrows():
+                keyword = row['keyword']
+                if keyword in seen_keywords:
+                    break
+                seen_keywords.add(keyword)
+            get_entry_from_dataset.unique_keywords = seen_keywords
+            get_entry_from_dataset.keywords_amount = len(seen_keywords)
         
+        keyword_count = get_entry_from_dataset.keywords_amount
+    
+    start_idx = index * keyword_count
+    end_idx = start_idx + keyword_count
+    
+    # Make sure we don't go out of bounds
+    if end_idx > len(df):
+        return None
+        
+    return df.iloc[start_idx:end_idx].reset_index(drop=True)
 
-
-# Load synthetic dataset
-dataset = generate_synthetic_data(1000)
-feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
-
-
-def read_and_organize_csv(file_path):
-    df = pd.read_csv(file_path)
-    organized_data = pd.DataFrame()
-
-    # Skip the 'step' column
-    df = df.drop(columns=['step'])
-
-    # Get unique keywords
-    keywords = df['keyword'].unique()
-
-    # Organize data
-    for i in range(5000):
-        for keyword in keywords:
-            keyword_data = df[df['keyword'] == keyword]
-            if len(keyword_data) > i:
-                organized_data = pd.concat([organized_data, keyword_data.iloc[[i]]])
-
-    return organized_data.reset_index(drop=True)
-
-# Example usage
-#organized_dataset = read_and_organize_csv('18 TorchRL Ads/balanced_ad_dataset_real_keywords.csv')
-#organized_dataset.to_csv('organized_dataset.csv', index=False)
-
-
-dataset = pd.read_csv('data/organized_dataset.csv')
-dataset.head()
-
-def get_entry_from_dataset(df, index):
-    # Count unique keywords
-    seen_keywords = set()
-    if not hasattr(get_entry_from_dataset, "unique_keywords"):
-        seen_keywords = set()
-        for i, row in df.iterrows():
-            keyword = row['keyword']
-            if keyword in seen_keywords:
-                break
-            seen_keywords.add(keyword)
-        get_entry_from_dataset.unique_keywords = seen_keywords
-        get_entry_from_dataset.keywords_amount = len(seen_keywords)
-    else:
-        seen_keywords = get_entry_from_dataset.unique_keywords
-
-    keywords_amount = get_entry_from_dataset.keywords_amount
-    return df.iloc[index * keywords_amount:index * keywords_amount + keywords_amount].reset_index(drop=True)
-
-# Example usage
-entry = get_entry_from_dataset(dataset, 0)
-print(entry)
-
-entry = get_entry_from_dataset(dataset, 1)
-print(entry)
-
-
-# Define a Custom TorchRL Environment
+# TorchRL Environment Implementation
 class AdOptimizationEnv(EnvBase):
     def __init__(self, dataset, initial_cash=100000.0, device="cpu"):
         super().__init__(device=device)
         self.initial_cash = initial_cash
         self.dataset = dataset
         self.num_features = len(feature_columns)
-        self.num_keywords = get_entry_from_dataset(self.dataset, 0).shape[0]
-        #self.action_spec = Bounded(low=0, high=1, shape=(self.num_keywords,), dtype=torch.int, domain="discrete")
-        #self.action_spec = MultiCategorical(nvec=[2] * self.num_keywords) # 0 = hold, 1 = buy
-        #self.action_spec = Categorical
-        self.action_spec = OneHot(n=self.num_keywords + 1) # select which one to buy or the last one to buy nothing
+        
+        # Get the first entry to determine the number of keywords
+        first_entry = get_entry_from_dataset(self.dataset, 0)
+        self.num_keywords = first_entry.shape[0]
+        
+        # Define the action spec (OneHot: select one keyword or none)
+        self.action_spec = OneHot(n=self.num_keywords + 1)  # +1 for the "buy nothing" action
+        
+        # Define the reward spec
         self.reward_spec = Unbounded(shape=(1,), dtype=torch.float32)
+        
+        # Define the observation spec
         self.observation_spec = Composite(
             observation = Composite(
                 keyword_features=Unbounded(shape=(self.num_keywords, self.num_features), dtype=torch.float32),
@@ -171,6 +205,8 @@ class AdOptimizationEnv(EnvBase):
             ),
             step_count=Unbounded(shape=(1,), dtype=torch.int64)
         )
+        
+        # Define the done spec
         self.done_spec = Composite(
             done=Binary(shape=(1,), dtype=torch.bool),
             terminated=Binary(shape=(1,), dtype=torch.bool),
@@ -181,19 +217,21 @@ class AdOptimizationEnv(EnvBase):
 
     def _reset(self, tensordict=None):
         self.current_step = 0
-        self.holdings = torch.zeros(self.num_keywords, dtype=torch.int, device=self.device) # 0 = not holding, 1 = holding keyword
+        self.holdings = torch.zeros(self.num_keywords, dtype=torch.int, device=self.device)
         self.cash = self.initial_cash
-        #sample = self.dataset.sample(1)
-        #state = torch.tensor(sample[feature_columns].values, dtype=torch.float32).squeeze()
-        # Create the initial observation.
-        keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
+        
+        # Get feature data for the first step
+        current_data = get_entry_from_dataset(self.dataset, self.current_step)
+        keyword_features = torch.tensor(current_data[feature_columns].values, dtype=torch.float32, device=self.device)
+        
+        # Create the initial observation
         obs = TensorDict({
-            "keyword_features": keyword_features,  # Current pki for each keyword
-            "cash": torch.tensor(self.cash, dtype=torch.float32, device=self.device),  # Current cash balance
-            "holdings": self.holdings.clone()  # 1 for each keyword if we are holding
+            "keyword_features": keyword_features,
+            "cash": torch.tensor([self.cash], dtype=torch.float32, device=self.device),
+            "holdings": self.holdings.clone()
         }, batch_size=[])
-        #return TensorDict({"observation": state}, batch_size=[])
-        # step_count initialisieren
+        
+        # Initialize or update tensordict
         if tensordict is None:
             tensordict = TensorDict({
                 "done": torch.tensor(False, dtype=torch.bool, device=self.device),
@@ -201,161 +239,111 @@ class AdOptimizationEnv(EnvBase):
                 "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
                 "terminated": torch.tensor(False, dtype=torch.bool, device=self.device),
                 "truncated": torch.tensor(False, dtype=torch.bool, device=self.device)
-            },
-            batch_size=[])
+            }, batch_size=[])
         else:
-            tensordict["done"] = torch.tensor(False, dtype=torch.bool, device=self.device)
-            tensordict["observation"] = obs
-            tensordict["step_count"] = torch.tensor(self.current_step, dtype=torch.int64, device=self.device)
-            tensordict["terminated"] = torch.tensor(False, dtype=torch.bool, device=self.device)
-            tensordict["truncated"] = torch.tensor(False, dtype=torch.bool, device=self.device)
+            tensordict.update({
+                "done": torch.tensor(False, dtype=torch.bool, device=self.device),
+                "observation": obs,
+                "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
+                "terminated": torch.tensor(False, dtype=torch.bool, device=self.device),
+                "truncated": torch.tensor(False, dtype=torch.bool, device=self.device)
+            })
         
         self.obs = obs
-        #print(result)
-        print(f'Reset: Step: {self.current_step}')
         return tensordict
 
-
     def _step(self, tensordict):
-        # Get the action from the input tensor dictionary. 
+        # Get the action from the input tensor dictionary
         action = tensordict["action"]
-        #action_idx = action.argmax(dim=-1).item()  # Get the index of the selected keyword
+        
+        # Find which action was selected (which position has 1)
         true_indices = torch.nonzero(action, as_tuple=True)[0]
-        action_idx = true_indices[0] if len(true_indices) > 0 else self.action_spec.n - 1
-
-        current_pki = get_entry_from_dataset(self.dataset, self.current_step)
-        #action = tensordict["action"].argmax(dim=-1).item()
+        action_idx = true_indices[0].item() if len(true_indices) > 0 else self.num_keywords
+        
+        # Get current data
+        current_data = get_entry_from_dataset(self.dataset, self.current_step)
         
         # Update holdings based on action (only one keyword is selected)
         new_holdings = torch.zeros_like(self.holdings)
         if action_idx < self.num_keywords:
             new_holdings[action_idx] = 1
         self.holdings = new_holdings
-
-        # Calculate the reward based on the action taken.
-        reward = self._compute_reward(action, current_pki, action_idx)
-
-         # Move to the next time step.
+        
+        # Calculate reward
+        reward = self._compute_reward(action, current_data)
+        
+        # Move to next step
         self.current_step += 1
-        terminated = self.current_step >= (len(self.dataset) // self.num_keywords) - 2 # -2 to avoid going over the last index
+        
+        # Check if we've reached the end of the dataset
+        max_steps = len(self.dataset) // self.num_keywords - 1
+        terminated = self.current_step >= max_steps
         truncated = False
-
-        # Get next pki for the keywords
-        next_keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
-        # todo: most probably we need to remove some columns from the state so we only have the features for the agent to see... change it also in reset
+        
+        # Get next state data if not terminated
+        if not terminated:
+            next_data = get_entry_from_dataset(self.dataset, self.current_step)
+            next_keyword_features = torch.tensor(next_data[feature_columns].values, dtype=torch.float32, device=self.device)
+        else:
+            # If terminated, use current data (doesn't matter as episode is ending)
+            next_keyword_features = torch.tensor(current_data[feature_columns].values, dtype=torch.float32, device=self.device)
+        
+        # Create next observation
         next_obs = TensorDict({
-            "keyword_features": next_keyword_features,  # next pki for each keyword
-            "cash": torch.tensor(self.cash, dtype=torch.float32, device=self.device),  # Current cash balance
+            "keyword_features": next_keyword_features,
+            "cash": torch.tensor([self.cash], dtype=torch.float32, device=self.device),
             "holdings": self.holdings.clone()
         }, batch_size=[])
         
-        # Update the state
+        # Update state
         self.obs = next_obs
-        print(f'Step: {self.current_step}, Action: {action_idx}, Reward: {reward}')
-        tensordict["done"] = torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device)
         
-        tensordict["done"] = torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device)
-        tensordict["observation"] = self.obs
-        tensordict["reward"] = torch.tensor(reward, dtype=torch.float32, device=self.device)
-        tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device)
-        tensordict["terminated"] = torch.tensor(terminated, dtype=torch.bool, device=self.device)
-        tensordict["truncated"] = torch.tensor(truncated, dtype=torch.bool, device=self.device)
-        next = TensorDict({
+        # Create result TensorDict
+        next_td = TensorDict({
             "done": torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device),
             "observation": next_obs,
-            "reward": torch.tensor(reward, dtype=torch.float32, device=self.device),
-            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
+            "reward": torch.tensor([reward], dtype=torch.float32, device=self.device),
+            "step_count": torch.tensor([self.current_step], dtype=torch.int64, device=self.device),
             "terminated": torch.tensor(terminated, dtype=torch.bool, device=self.device),
             "truncated": torch.tensor(truncated, dtype=torch.bool, device=self.device)
-
         }, batch_size=tensordict.batch_size)
         
-        return next
-    
-        
+        return next_td
 
-    def _compute_reward(self, action, current_pki, action_idx):
+    def _compute_reward(self, action, current_data):
         """Compute reward based on the selected keyword's metrics"""
-        if action_idx == self.num_keywords:
+        if action.sum() == 0 or torch.argmax(action.float()).item() == self.num_keywords:
+            # "Do nothing" action
             return 0.0
         
-        reward = 0.0
-        # Iterate thourh all keywords
-        for i in range(self.num_keywords):
-            sample = current_pki.iloc[i]
-            cost = sample["ad_spend"]
-            ctr = sample["paid_ctr"]
-            if action[i] == True and cost > 5000:
-                reward += 1.0
-            elif action[i] == False and ctr > 0.15:
-                reward += 1.0
-            else:
-                reward -= 1.0
+        selected_idx = torch.argmax(action.float()).item()
+        selected_keyword = current_data.iloc[selected_idx]
+        
+        # Calculate reward based on ROAS and CTR
+        roas = selected_keyword["ad_roas"]
+        ctr = selected_keyword["paid_ctr"]
+        ad_spend = selected_keyword["ad_spend"]
+        
+        # Positive reward for high ROAS keywords with significant ad spend
+        if roas > 2.0 and ad_spend > 1000:
+            reward = 2.0
+        # Medium reward for profitable keywords
+        elif roas > 1.0:
+            reward = 1.0
+        # Medium reward for high CTR keywords
+        elif ctr > 0.15:
+            reward = 1.0
+        # Slight penalty for unprofitable choices
+        else:
+            reward = -0.5
+            
         return reward
-
+        
     def _set_seed(self, seed: Optional[int]):
         rng = torch.manual_seed(seed)
         self.rng = rng
 
-# Initialize Environment
-env = AdOptimizationEnv(dataset, device=device)
-state_dim = env.num_features
-#action_dim = env.action_spec.n
-
-
-
-
-# In[ ]:
-
-
-env.action_spec
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class MultiStockQValueNet(nn.Module):
-    def __init__(self, input_dim, num_keywords, num_actions):
-        """
-        input_dim: Dimension of the input features (e.g., state dimension)
-        num_keywords: Number of keywords (each with its own discrete action space)
-        num_actions: Number of discrete actions per keyword (e.g., 2 for buy or wait)
-        """
-        super().__init__()
-        # Shared feature extraction backbone.
-        self.shared = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU()
-        )
-        # Create a separate head for each stock.
-        self.heads = nn.ModuleList([nn.Linear(128, num_actions) for _ in range(num_keywords)])
-        
-    def forward(self, x):
-        # x shape: (batch, input_dim)
-        features = self.shared(x)  # Shape: (batch, 128)
-        # Get Q-values for each stock
-        q_values = [head(features) for head in self.heads]  # Each has shape: (batch, num_actions)
-        # Stack to form a tensor with shape: (batch, num_stocks, num_actions)
-        q_values = torch.stack(q_values, dim=1)
-        return q_values
-
-# Example usage:
-# Let's assume:
-#   - Your environment's state dimension is 20.
-#   - You have 3 stocks.
-#   - For each stock, there are 3 possible actions.
-input_dim = 20
-num_stocks = 3
-num_actions = 3
-
-q_net = MultiStockQValueNet(input_dim, num_stocks, num_actions)
-dummy_input = torch.randn(4, input_dim)  # batch of 4
-print(q_net(dummy_input).shape)  # Expected shape: (4, 3, 3)
-
- # Create a preprocessing layer to flatten and combine inputs
+# Module to flatten and combine inputs for the neural network
 class FlattenInputs(nn.Module):
     def forward(self, keyword_features, cash, holdings):
         # Check if we have a batch dimension
@@ -398,127 +386,481 @@ class FlattenInputs(nn.Module):
             
         return combined
 
-flatten_module = TensorDictModule(
-    FlattenInputs(),
-    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
-    out_keys=["flattened_input"]
-)
+# Visualization functions
+def visualize_training_progress(metrics, output_dir="plots", window_size=20):
+    """Visualize training metrics including rewards, losses, and exploration rate."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    rewards = metrics["rewards"]
+    losses = metrics["losses"]
+    epsilons = metrics["epsilon_values"]
+    
+    if not rewards:
+        print("No rewards to visualize")
+        return None
+    
+    # Create figure with 3 subplots
+    fig, axes = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
+    fig.suptitle("RL Training Progress", fontsize=16)
+    
+    # Plot rewards
+    axes[0].plot(rewards, alpha=0.3, color='blue', label="Episode Rewards")
+    
+    if len(rewards) >= window_size:
+        # Add smoothed rewards line
+        smoothed_rewards = []
+        for i in range(len(rewards) - window_size + 1):
+            smoothed_rewards.append(np.mean(rewards[i:i+window_size]))
+        axes[0].plot(range(window_size-1, len(rewards)), smoothed_rewards, 
+                   color='red', linewidth=2, label=f"Moving Average ({window_size})")
+    
+    axes[0].set_ylabel("Episode Reward")
+    axes[0].set_title("Training Rewards")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot losses
+    if losses:
+        axes[1].plot(losses, color='purple', alpha=0.5, label="Training Loss")
+        
+        if len(losses) >= window_size:
+            # Add smoothed losses line
+            smoothed_losses = []
+            for i in range(len(losses) - window_size + 1):
+                smoothed_losses.append(np.mean(losses[i:i+window_size]))
+            axes[1].plot(range(window_size-1, len(losses)), smoothed_losses, 
+                       color='darkred', linewidth=2, label=f"Moving Average ({window_size})")
+        
+        axes[1].set_ylabel("Loss")
+        axes[1].set_title("Training Loss")
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+    
+    # Plot exploration rate
+    if epsilons:
+        axes[2].plot(epsilons, color='green', label="Exploration Rate (ε)")
+        axes[2].set_ylim(0, 1)
+        axes[2].set_xlabel("Episodes")
+        axes[2].set_ylabel("Epsilon (ε)")
+        axes[2].set_title("Exploration Rate")
+        axes[2].legend()
+        axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plot_path = f"{output_dir}/training_progress.png"
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    
+    return plot_path
 
-from torchrl.modules import EGreedyModule, MLP, QValueModule
+def visualize_evaluation(eval_results, feature_columns, output_dir="plots"):
+    """Visualize the evaluation results."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create a figure with 2x2 subplots
+    fig, axs = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle("Ad Optimization Evaluation Results", fontsize=16)
+    
+    # 1. Action Distribution (Top Left)
+    action_labels = ["No Action"] + [f"Keyword {i}" for i in range(eval_results["action_counts"].shape[0]-1)]
+    axs[0, 0].bar(action_labels, eval_results["action_counts"])
+    axs[0, 0].set_title("Action Distribution")
+    axs[0, 0].set_ylabel("Count")
+    plt.setp(axs[0, 0].get_xticklabels(), rotation=45, ha="right")
+    
+    # 2. Rewards Distribution (Top Right)
+    axs[0, 1].hist(eval_results["rewards"], bins=20, alpha=0.7, color='blue')
+    axs[0, 1].axvline(x=np.mean(eval_results["rewards"]), color='r', linestyle='--', 
+                     label=f'Mean: {np.mean(eval_results["rewards"]):.2f}')
+    axs[0, 1].set_title("Reward Distribution")
+    axs[0, 1].set_xlabel("Reward")
+    axs[0, 1].set_ylabel("Frequency")
+    axs[0, 1].legend()
+    
+    # 3. Feature Importance (Bottom Left)
+    if eval_results["feature_importance"] is not None:
+        # Sort features by importance
+        sorted_idx = np.argsort(eval_results["feature_importance"])
+        axs[1, 0].barh([feature_columns[i] for i in sorted_idx], 
+                      [eval_results["feature_importance"][i] for i in sorted_idx])
+        axs[1, 0].set_title("Feature Importance")
+        axs[1, 0].set_xlabel("Importance Score")
+    else:
+        axs[1, 0].text(0.5, 0.5, "Feature importance not available", 
+                      ha='center', va='center', fontsize=12)
+    
+    # 4. Performance Over Time (Bottom Right)
+    if len(eval_results["rewards"]) > 0:
+        # Calculate cumulative average reward
+        cum_rewards = np.cumsum(eval_results["rewards"])
+        cum_avg = cum_rewards / np.arange(1, len(cum_rewards) + 1)
+        
+        axs[1, 1].plot(cum_avg, color='green', label='Cumulative Average Reward')
+        axs[1, 1].set_title("Performance Over Time")
+        axs[1, 1].set_xlabel("Steps")
+        axs[1, 1].set_ylabel("Cumulative Average Reward")
+        axs[1, 1].legend()
+    else:
+        axs[1, 1].text(0.5, 0.5, "No reward data available", 
+                      ha='center', va='center', fontsize=12)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plot_path = f"{output_dir}/evaluation_results.png"
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    
+    return plot_path
 
-# Define dimensions
-feature_dim = len(feature_columns)
-num_keywords = env.num_keywords
-action_dim = env.action_spec.shape[-1]
-total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features + cash + holdings
+# Training function that works with TorchRL components
+def train_torchrl_agent(env, policy, frames_per_batch=1000, total_frames=100000, init_rand_steps=5000, 
+                       batch_size=64, optim_steps=10, lr=0.001, gamma=0.99, 
+                       target_update_interval=10, evaluation_interval=1000):
+    # Set up collector
+    collector = SyncDataCollector(
+        env,
+        policy,
+        frames_per_batch=frames_per_batch,
+        total_frames=total_frames,
+        init_random_frames=init_rand_steps,
+    )
+    
+    # Set up replay buffer
+    rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
+    
+    # Set up loss function
+    loss_module = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
+    optimizer = optim.Adam(loss_module.parameters(), lr=lr)
+    updater = SoftUpdate(loss_module, eps=0.99)
+    
+    # Metrics for tracking
+    total_frames_seen = 0
+    rewards_history = []
+    losses = []
+    epsilon_values = []
+    exploration_module = None
+    
+    # Find exploration module if it exists
+    for module in policy.modules():
+        if isinstance(module, EGreedyModule):
+            exploration_module = module
+            break
+    
+    # Training loop
+    print("Starting training...")
+    start_time = time.time()
+    
+    episodes_completed = 0
+    episode_reward = 0
+    
+    for i, data in enumerate(collector):
+        # Add data to replay buffer
+        rb.extend(data.to(device))
+        total_frames_seen += data.numel()
+        
+        # Calculate completed episodes and average reward
+        done_mask = data["next", "done"]
+        num_new_episodes = done_mask.sum().item()
+        episodes_completed += num_new_episodes
+        
+        # Update episode_reward
+        if num_new_episodes > 0:
+            rewards = data["reward"].squeeze() if "reward" in data.keys() else torch.zeros(data.shape[0], device=device)
+            # Compute rewards per episode
+            reward_indices = torch.where(done_mask)[0]
+            prev_idx = 0
+            for idx in reward_indices:
+                if idx >= prev_idx:  # Ensure we have rewards to sum
+                    episode_reward = rewards[prev_idx:idx+1].sum().item()
+                    rewards_history.append(episode_reward)
+                    epsilon_values.append(exploration_module.eps if exploration_module else 0.0)
+                    prev_idx = idx + 1
+        
+        # Training steps
+        if len(rb) > batch_size:
+            batch_losses = []
+            for _ in range(optim_steps):
+                # Sample batch
+                sample = rb.sample(batch_size).to(device)
+                
+                # Compute loss
+                loss_vals = loss_module(sample)
+                loss_val = loss_vals["loss"]
+                batch_losses.append(loss_val.item())
+                
+                # Update network
+                optimizer.zero_grad()
+                loss_val.backward()
+                optimizer.step()
+                
+                # Update exploration rate if applicable
+                if exploration_module:
+                    exploration_module.step(data.numel())
+                
+                # Update target network
+                if total_frames_seen % target_update_interval == 0:
+                    updater.step()
+            
+            losses.extend(batch_losses)
+        
+        # Logging
+        if (i+1) % 10 == 0:
+            elapsed_time = time.time() - start_time
+            avg_reward = np.mean(rewards_history[-10:]) if rewards_history else 0
+            avg_loss = np.mean(losses[-10:]) if losses else 0
+            epsilon = exploration_module.eps if exploration_module else 0
+            
+            print(f"Step {i+1}, Frames: {total_frames_seen}, Episodes: {episodes_completed}")
+            print(f"Avg Reward: {avg_reward:.2f}, Epsilon: {epsilon:.3f}, Loss: {avg_loss:.4f}")
+            print(f"Time elapsed: {elapsed_time:.1f}s\n")
+        
+        # Stop if we've seen enough frames
+        if total_frames_seen >= total_frames:
+            break
+    
+    total_time = time.time() - start_time
+    print(f"Training completed. Total frames: {total_frames_seen}, Episodes: {episodes_completed}")
+    print(f"Total time: {total_time:.2f}s")
+    
+    return {
+        "rewards": rewards_history,
+        "losses": losses,
+        "epsilon_values": epsilon_values,
+        "episodes": episodes_completed,
+        "frames": total_frames_seen,
+        "training_time": total_time
+    }
 
-value_mlp = MLP(in_features=total_input_dim, out_features=action_dim, num_cells=[128, 64])
-#value_net = TensorDictModule(value_mlp, in_keys=["observation"], out_keys=["action_value"])
-value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
-policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
-#policy = TensorDictSequential(value_net, MultiStockQValueNet(len(feature_columns), env.num_keywords, 2))
-# Make sure your policy is on the correct device
-policy = policy.to(device)
+# Evaluation function for TorchRL agent
+def evaluate_torchrl_agent(env, policy, num_episodes=10):
+    # Disable exploration during evaluation
+    evaluation_policy = policy
+    
+    # Find and disable exploration if present
+    for module in policy.modules():
+        if isinstance(module, EGreedyModule):
+            # Save original epsilon and set to 0 for evaluation
+            original_eps = module.eps
+            module.eps = 0.0
+    
+    rewards = []
+    actions = []
+    total_reward = 0
+    episode_count = 0
+    max_steps = len(env.dataset) // env.num_keywords - 1
+    
+    while episode_count < num_episodes:
+        # Reset environment
+        tensordict = env.reset()
+        episode_reward = 0
+        done = False
+        step = 0
+        
+        while not done and step < max_steps:
+            # Select action
+            with torch.no_grad():
+                td_next = evaluation_policy(tensordict)
+                action = td_next["action"]
+            
+            # Record action
+            actions.append(action.cpu().numpy())
+            
+            # Take step in environment
+            tensordict = env.step(td_next)
+            
+            # Get reward and update total
+            reward = tensordict.get("reward", torch.tensor([0.0], device=device)).item()
+            episode_reward += reward
+            rewards.append(reward)
+            
+            # Check if done
+            done = tensordict["done"].item()
+            step += 1
+        
+        total_reward += episode_reward
+        episode_count += 1
+    
+    # Restore original exploration epsilon if applicable
+    for module in policy.modules():
+        if isinstance(module, EGreedyModule):
+            module.eps = original_eps
+    
+    # Convert actions to numpy array
+    actions = np.array(actions)
+    
+    # Count action frequencies
+    action_counts = np.zeros(env.action_spec.n)
+    for a in actions:
+        selected_action = np.argmax(a)
+        action_counts[selected_action] += 1
+    
+    # Try to compute feature importance (simplified)
+    feature_importance = None
+    try:
+        # Get all states from evaluation
+        states = np.array([td["observation"]["keyword_features"].cpu().numpy() for td in tensordict_history])
+        # Flatten states across keywords
+        flattened_states = states.reshape(-1, len(feature_columns))
+        # Simple correlation between features and rewards as proxy for importance
+        correlations = np.abs(np.corrcoef(flattened_states.T, rewards))[:len(feature_columns), -1]
+        feature_importance = correlations
+    except:
+        pass  # If we can't compute feature importance, leave as None
+    
+    # Compile evaluation results
+    eval_results = {
+        "total_reward": total_reward,
+        "avg_reward": total_reward / episode_count if episode_count > 0 else 0,
+        "rewards": rewards,
+        "action_counts": action_counts,
+        "feature_importance": feature_importance,
+        "success_rate": sum(1 for r in rewards if r > 0) / len(rewards) if rewards else 0
+    }
+    
+    return eval_results
 
-exploration_module = EGreedyModule(
-    env.action_spec, annealing_num_steps=100_000, eps_init=0.5
-)
-exploration_module = exploration_module.to(device)
-policy_explore = TensorDictSequential(policy, exploration_module).to(device)
+# Main function to tie everything together
+def main():
+    """Main function to run the training and evaluation pipeline."""
+    import time
+    
+    # Create output directory with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"ad_optimization_results_{timestamp}"
+    os.makedirs(run_dir, exist_ok=True)
+    plot_dir = f"{run_dir}/plots"
+    os.makedirs(plot_dir, exist_ok=True)
+    
+    print(f"Starting digital advertising optimization pipeline...")
+    print(f"Results will be saved to: {run_dir}")
+    
+    # Set random seeds
+    set_all_seeds(42)
+    
+    # Generate or load dataset
+    print("Generating synthetic dataset...")
+    dataset = generate_synthetic_data(1000)
+    dataset_path = f"{run_dir}/synthetic_ad_data.csv"
+    dataset.to_csv(dataset_path, index=False)
+    print(f"Synthetic dataset saved to {dataset_path}")
+    
+    # Print dataset summary
+    print("\nDataset summary:")
+    print(f"Shape: {dataset.shape}")
+    print("\nFeature stats:")
+    print(dataset[feature_columns].describe().to_string())
+    
+    # Create environment
+    env = AdOptimizationEnv(dataset, device=device)
+    
+    # Create policy network with TorchRL components
+    flatten_module = TensorDictModule(
+        FlattenInputs(),
+        in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
+        out_keys=["flattened_input"]
+    )
+    
+    # Calculate input dimensions
+    feature_dim = len(feature_columns)
+    num_keywords = env.num_keywords
+    action_dim = env.action_spec.shape[-1]
+    total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features + cash + holdings
+    
+    # Create MLP network
+    value_mlp = MLP(
+        in_features=total_input_dim, 
+        out_features=action_dim, 
+        num_cells=[128, 64],
+        activation_class=nn.ReLU
+    )
+    
+    # Create value network
+    value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
+    
+    # Create policy with flattening and value network
+    policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
+    policy = policy.to(device)
+    
+    # Add exploration module
+    exploration_module = EGreedyModule(
+        env.action_spec, 
+        annealing_num_steps=100_000, 
+        eps_init=0.9,
+        eps_end=0.05
+    )
+    exploration_module = exploration_module.to(device)
+    policy_explore = TensorDictSequential(policy, exploration_module).to(device)
+    
+    # Train agent
+    print("\nTraining RL agent...")
+    training_start = time.time()
+    training_metrics = train_torchrl_agent(
+        env=env,
+        policy=policy_explore,
+        frames_per_batch=100,
+        total_frames=50000,  # For faster training
+        init_rand_steps=1000,
+        batch_size=64,
+        optim_steps=10,
+        lr=0.001,
+        gamma=0.99,
+        target_update_interval=200
+    )
+    training_time = time.time() - training_start
+    print(f"Training completed in {training_time:.2f} seconds")
+    
+    # Generate training visualization
+    print("Generating training visualization...")
+    training_plot_path = visualize_training_progress(training_metrics, output_dir=plot_dir)
+    print(f"Training progress plot saved to {training_plot_path}")
+    
+    # Evaluate agent
+    print("\nEvaluating trained agent...")
+    eval_episodes = 10
+    eval_results = evaluate_torchrl_agent(env, policy_explore, num_episodes=eval_episodes)
+    
+    # Print evaluation results
+    print("\nEvaluation Results:")
+    print(f"Average Reward: {eval_results['avg_reward']:.2f}")
+    print(f"Success Rate: {eval_results['success_rate']:.2f}")
+    
+    action_counts = eval_results["action_counts"]
+    total_actions = action_counts.sum()
+    print("\nAction Distribution:")
+    for i, count in enumerate(action_counts):
+        if i < env.num_keywords:
+            print(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)")
+        else:
+            print(f"  No Action: {count} ({100 * count / total_actions:.1f}%)")
+    
+    # Save evaluation metrics
+    eval_metrics_path = f"{run_dir}/evaluation_metrics.txt"
+    with open(eval_metrics_path, "w") as f:
+        f.write(f"Average Reward: {eval_results['avg_reward']:.4f}\n")
+        f.write(f"Success Rate: {eval_results['success_rate']:.4f}\n")
+        f.write(f"Total Reward: {eval_results['total_reward']:.4f}\n")
+        f.write("\nAction Distribution:\n")
+        for i, count in enumerate(action_counts):
+            if i < env.num_keywords:
+                f.write(f"  Keyword {i}: {count} ({100 * count / total_actions:.1f}%)\n")
+            else:
+                f.write(f"  No Action: {count} ({100 * count / total_actions:.1f}%)\n")
+    
+    # Visualize evaluation
+    print("Generating evaluation visualization...")
+    eval_plot_path = visualize_evaluation(eval_results, feature_columns, output_dir=plot_dir)
+    print(f"Evaluation plot saved to {eval_plot_path}")
+    
+    # Save model
+    model_path = f"{run_dir}/ad_optimization_model.pt"
+    torch.save({
+        'model_state_dict': policy.state_dict(),
+        'feature_columns': feature_columns,
+        'training_metrics': training_metrics
+    }, model_path)
+    print(f"Model saved to {model_path}")
+    
+    print(f"\nPipeline completed successfully. All results saved to {run_dir}")
+    return policy, training_metrics, eval_results
 
-
-# In[ ]:
-
-
-value_mlp
-
-
-# In[ ]:
-
-
-from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer
-
-init_rand_steps = 5000
-frames_per_batch = 100
-optim_steps = 10
-collector = SyncDataCollector(
-    env,
-    policy_explore,
-    frames_per_batch=frames_per_batch,
-    total_frames=-1,
-    init_random_frames=init_rand_steps,
-)
-rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
-
-from torch.optim import Adam
-
-
-# In[ ]:
-
-
-from torchrl.objectives import DQNLoss, SoftUpdate
-#actor = QValueActor(value_net, in_keys=["observation"], action_space=spec)
-loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-optim = Adam(loss.parameters(), lr=0.02)
-updater = SoftUpdate(loss, eps=0.99)
-
-
-# In[ ]:
-
-
-import time
-total_count = 0
-total_episodes = 0
-t0 = time.time()
-for i, data in enumerate(collector):
-    # Write data in replay buffer
-    print(f'data: step_count: {data["step_count"]}')
-    rb.extend(data.to(device))
-    #max_length = rb[:]["next", "step_count"].max()
-    max_length = rb[:]["step_count"].max()
-    if len(rb) > init_rand_steps:
-        # Optim loop (we do several optim steps
-        # per batch collected for efficiency)
-        for _ in range(optim_steps):
-            sample = rb.sample(128)
-            # Make sure sample is on the correct device
-            sample = sample.to(device)  # Move the sample to the specified device
-            loss_vals = loss(sample)
-            loss_vals["loss"].backward()
-            optim.step()
-            optim.zero_grad()
-            # Update exploration factor
-            exploration_module.step(data.numel())
-            # Update target params
-            updater.step()
-            if i % 10 == 0: # Fixed condition (was missing '== 0')
-                print(f"Max num steps: {max_length}, rb length {len(rb)}")
-            total_count += data.numel()
-            total_episodes += data["next", "done"].sum()
-    #if max_length > 200:  #that is still from the sample where 200 is a good value to balance the CartPole
-    #    break
-    if total_count > 10_000:
-        break
-
-t1 = time.time()
-
-print(
-    f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s."
-)
-
-
-''''
-Todo:
-- Clean up the code
-- Split training and test data
-- Implement tensorbaord
-- Implement the visualization
-- Implement the saving of the model
-- Implement the inference
-- Implement the optuna hyperparameter tuning
-'''''
-
-
-
-
+if __name__ == "__main__":
+    main()
