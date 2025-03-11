@@ -20,13 +20,7 @@ from tensordict.nn import TensorDictModule, TensorDictSequential
 
 
 
-# Select the best device for our machine
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else
-    "mps" if torch.backends.mps.is_available() else
-    "cpu"
-)
-print(device)
+
 
 
 # Generate Realistic Synthetic Data. This is coming from Ilja's code
@@ -68,8 +62,9 @@ print(test.columns)
 
 
 # Load synthetic dataset
+''''
 dataset = generate_synthetic_data(1000)
-feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
+'''
 
 
 def read_and_organize_csv(file_path):
@@ -104,8 +99,10 @@ def read_and_organize_csv(file_path):
     return organized_data.reset_index(drop=True)
 
 # Example usage
+''''
 dataset = pd.read_csv('data/organized_dataset.csv')
-#dataset.head()
+dataset.head()
+'''
 
 
 def get_entry_from_dataset(df, index):
@@ -370,10 +367,6 @@ class AdOptimizationEnv(EnvBase):
         rng = torch.manual_seed(seed)
         self.rng = rng
 
-# Initialize Environment
-env = AdOptimizationEnv(dataset, device=device)
-state_dim = env.num_features
-
 
 class FlattenInputs(nn.Module):
     """
@@ -438,8 +431,24 @@ class FlattenInputs(nn.Module):
 
 
 
+# Select the best device for our machine
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else
+    "mps" if torch.backends.mps.is_available() else
+    "cpu"
+)
+print(device)
 
-# Define dimensions
+# Load the organized dataset
+dataset = pd.read_csv('data/organized_dataset.csv')
+
+# Initialize Environment
+env = AdOptimizationEnv(dataset, device=device)
+state_dim = env.num_features
+
+# Define data and dimensions
+feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
+
 feature_dim = len(feature_columns)
 num_keywords = env.num_keywords
 action_dim = env.action_spec.shape[-1]
