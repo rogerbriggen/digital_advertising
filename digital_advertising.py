@@ -17,11 +17,10 @@ from torchrl.collectors import SyncDataCollector
 from torchrl.modules import EGreedyModule, MLP, QValueModule
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, TensorDictSequential
+from torch.utils.tensorboard import SummaryWriter
 
-
-
-
-
+# Tensorboard vorbereiten
+writer = SummaryWriter()
 
 # Generate Realistic Synthetic Data. This is coming from Ilja's code
 # Platzierung:
@@ -562,7 +561,9 @@ best_test_reward = float('-inf')
 test_env = AdOptimizationEnv(dataset_test, device=device) # Create a test environment with the test dataset
 for i, data in enumerate(collector):
     # Write data in replay buffer
-    print(f'data: step_count: {data["step_count"]}')
+    step_count = data["step_count"]
+    
+    print(f'data: step_count: {step_count}')
     rb.extend(data.to(device))
     #max_length = rb[:]["next", "step_count"].max()
     max_length = rb[:]["step_count"].max()
@@ -571,9 +572,12 @@ for i, data in enumerate(collector):
         # per batch collected for efficiency)
         for _ in range(optim_steps):
             sample = rb.sample(128)
+            total_count += data.numel()
+            
             # Make sure sample is on the correct device
             sample = sample.to(device)  # Move the sample to the specified device
             loss_vals = loss(sample)
+            writer.add_scalar("Loss Value", loss_vals["loss"].item(), total_count)
             loss_vals["loss"].backward()
             optim.step()
             optim.zero_grad()
@@ -583,7 +587,7 @@ for i, data in enumerate(collector):
             updater.step()
             if i % 10 == 0: # Fixed condition (was missing '== 0')
                 print(f"Max num steps: {max_length}, rb length {len(rb)}")
-            total_count += data.numel()
+            
             total_episodes += data["next", "done"].sum()
 
             # Evaluate on test data periodically
@@ -613,6 +617,7 @@ for i, data in enumerate(collector):
                     done = test_td["done"].item()
                     test_step += 1
                 
+                writer.add_scalar("Test performance", total_test_reward, total_count)
                 print(f"Test performance: Total reward = {total_test_reward}, Steps = {test_step}")
                 
                 # Save model if it's the best so far
