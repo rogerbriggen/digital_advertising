@@ -121,7 +121,7 @@ def read_and_organize_csv(file_path):
 #organized_dataset.to_csv('organized_dataset.csv', index=False)
 
 
-dataset = pd.read_csv('18 TorchRL Ads/organized_dataset.csv')
+dataset = pd.read_csv('data/organized_dataset.csv')
 dataset.head()
 
 def get_entry_from_dataset(df, index):
