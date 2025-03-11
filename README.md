@@ -12,7 +12,7 @@ The conda environment is named torchrl_ads.
 
 ````shell
 conda env create -f environment.yml
-conda env create -f environment_cuda.yml # for the cuda version
+conda env create -f environment-cuda.yml # for the cuda version
 
 ````
 
