@@ -12,9 +12,10 @@ The conda environment is named torchrl_ads.
 
 ````shell
 conda env create -f environment.yml
-conda env create -f environment-cuda.yml # for the cuda version
-
+# if you want cuda, add
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124 
 ````
+
 
 ### The environment can be updated with conda
 
