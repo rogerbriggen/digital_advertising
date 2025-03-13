@@ -610,6 +610,95 @@ class ModelHandler:
             print("No valid models found.")
             
         return best_model_path
+    
+
+
+def create_policy(env, feature_dim, num_keywords, device):
+    """
+    Creates a policy network with the standard architecture.
+    
+    Args:
+        env: Environment containing action_spec
+        feature_dim: Dimension of features per keyword
+        num_keywords: Number of keywords
+        device: Device to create the policy on
+        
+    Returns:
+        policy: The complete policy model
+    """
+    action_dim = env.action_spec.shape[-1]
+    total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
+    
+    # Create the flattening module
+    flatten_module = TensorDictModule(
+        FlattenInputs(),
+        in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
+        out_keys=["flattened_input"]
+    )
+    
+    # Create the value network
+    value_mlp = MLP(
+        in_features=total_input_dim, 
+        out_features=action_dim, 
+        num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
+        activation_class=nn.ReLU  # ReLU often performs better than Tanh
+    )
+    
+    value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
+    
+    # Combine into the complete policy
+    policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
+    
+    return policy.to(device)
+
+
+def run_inference(model_path, dataset_test, device, feature_columns):
+    """
+    Run inference using a saved model
+    
+    Args:
+        model_path: Path to the saved model
+        dataset_test: Test dataset 
+        device: Device to run on
+        feature_columns: List of feature column names
+    """
+    # Create test environment
+    test_env = AdOptimizationEnv(dataset_test, device=device)
+    
+    # Get dimensions
+    feature_dim = len(feature_columns)
+    num_keywords = test_env.num_keywords
+    
+    # Create a fresh policy with the same architecture
+    inference_policy = create_policy(test_env, feature_dim, num_keywords, device)
+    
+    # Load the saved model handler
+    model_handler = ModelHandler()
+    inference_policy, metadata = model_handler.load_model(
+        policy=inference_policy,
+        filepath=model_path,
+        device=device,
+        inference_only=True
+    )
+    
+    # Run inference
+    test_td = test_env.reset()
+    total_reward = 0.0
+    done = False
+    
+    while not done:
+        with torch.no_grad():
+            test_td = inference_policy(test_td)
+        test_td = test_env.step(test_td)
+        reward = test_td["reward"].item()
+        total_reward += reward
+        done = test_td["done"].item()
+        
+        print(f"Step: {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
+    
+    print(f"Total inference reward: {total_reward}")
+    return total_reward, inference_policy
+
 
 # Select the best device for our machine
 device = torch.device(
@@ -637,39 +726,13 @@ num_keywords = env.num_keywords
 action_dim = env.action_spec.shape[-1]
 total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
 
-value_mlp = MLP(
-    in_features=total_input_dim, 
-    out_features=action_dim, 
-    num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
-    activation_class=nn.ReLU  # ReLU often performs better than Tanh
-)
 
-value_mlp_eval = MLP(
-    in_features=total_input_dim, 
-    out_features=action_dim, 
-    num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
-    activation_class=nn.ReLU  # ReLU often performs better than Tanh
-)
+# Create the main policy for training
+policy = create_policy(env, feature_dim, num_keywords, device)
 
+# Create the evaluation policy (now using the same architecture)
+policy_eval = create_policy(env, feature_dim, num_keywords, device)
 
-flatten_module = TensorDictModule(
-    FlattenInputs(),
-    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
-    out_keys=["flattened_input"]
-)
-flatten_module_eval = TensorDictModule(
-    FlattenInputs(),
-    in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
-    out_keys=["flattened_input"]
-)
-#value_net = TensorDictModule(value_mlp, in_keys=["observation"], out_keys=["action_value"])
-value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
-value_net_eval = TensorDictModule(value_mlp_eval, in_keys=["flattened_input"], out_keys=["action_value"])
-policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
-policy_eval = TensorDictSequential(flatten_module_eval, value_net_eval, QValueModule(spec=env.action_spec))
-
-# Make sure your policy is on the correct device
-policy = policy.to(device)
 
 exploration_module = EGreedyModule(
     env.action_spec, annealing_num_steps=100_000, eps_init=0.9, eps_end=0.01
@@ -742,8 +805,8 @@ for i, data in enumerate(collector):
                 print(f"\n--- Testing model performance after {total_count} training steps ---")
                 # Use policy without exploration for evaluation
                 policy_eval.load_state_dict(policy.state_dict()) # Just use the trained policy without exploration
-                policy_eval = policy_eval.to(device)
                 policy_eval.eval()
+                
                 # Reset the test environment
                 test_td = test_env.reset()
                 total_test_reward = 0.0
@@ -807,6 +870,6 @@ Todo:
 - Implement tensorbaord (PK, MAC)
 - Implement the visualization (see tensorboard) (EO)
 - ✅ Implement the saving of the model (RB)
-- Implement the inference (RB)
+- ✅Implement the inference (RB)
 - Implement the optuna hyperparameter tuning (UT)
 '''''
