@@ -699,7 +699,153 @@ def run_inference(model_path, dataset_test, device, feature_columns):
     print(f"Total inference reward: {total_reward}")
     return total_reward, inference_policy
 
+def learn():
+    # Load the organized dataset
+    dataset = pd.read_csv('data/organized_dataset.csv')
+    # Split it into training and test data
+    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
 
+    # Initialize Environment
+    env = AdOptimizationEnv(dataset_training, device=device)
+    state_dim = env.num_features
+
+    # Define data and dimensions
+    feature_dim = len(feature_columns)
+    num_keywords = env.num_keywords
+
+    # Create the main policy for training
+    policy = create_policy(env, feature_dim, num_keywords, device)
+
+    # Create the evaluation policy (now using the same architecture)
+    policy_eval = create_policy(env, feature_dim, num_keywords, device)
+
+    exploration_module = EGreedyModule(
+        env.action_spec, annealing_num_steps=100_000, eps_init=0.9, eps_end=0.01
+    )
+    exploration_module = exploration_module.to(device)
+    policy_explore = TensorDictSequential(policy, exploration_module).to(device)
+
+    init_rand_steps = 5000
+    frames_per_batch = 100
+    optim_steps = 10
+    collector = SyncDataCollector(
+        env,
+        policy_explore,
+        frames_per_batch=frames_per_batch,
+        total_frames=-1,
+        init_random_frames=init_rand_steps,
+    )
+    rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
+
+    loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
+    optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay for regularization
+    updater = SoftUpdate(loss, eps=0.99)
+
+    total_count = 0
+    total_episodes = 0
+    t0 = time.time()
+    # Evaluation parameters
+    evaluation_frequency = 1000  # Run evaluation every 1000 steps
+    best_test_reward = float('-inf')
+    test_env = AdOptimizationEnv(dataset_test, device=device)  # Create a test environment with the test dataset
+    model_handler = ModelHandler(save_dir='saves')
+    for i, data in enumerate(collector):
+        # Write data in replay buffer
+        step_count = data["step_count"]
+
+        print(f'data: step_count: {step_count}')
+        rb.extend(data.to(device))
+        max_length = rb[:]["step_count"].max()
+        if len(rb) > init_rand_steps:
+            # Optim loop (we do several optim steps per batch collected for efficiency)
+            for _ in range(optim_steps):
+                sample = rb.sample(128)
+                total_count += data.numel()
+
+                # Make sure sample is on the correct device
+                sample = sample.to(device)  # Move the sample to the specified device
+                loss_vals = loss(sample)
+                writer.add_scalar("Loss Value", loss_vals["loss"].item(), total_count)
+                loss_vals["loss"].backward()
+                optim.step()
+                optim.zero_grad()
+                # Update exploration factor
+                exploration_module.step(data.numel())
+                # Update target params
+                updater.step()
+                if i % 10 == 0:  # Fixed condition (was missing '== 0')
+                    print(f"Max num steps: {max_length}, rb length {len(rb)}")
+
+                total_episodes += data["next", "done"].sum()
+
+                # Evaluate on test data periodically
+                if total_count % evaluation_frequency == 0:
+                    print(f"\n--- Testing model performance after {total_count} training steps ---")
+                    # Use policy without exploration for evaluation
+                    policy_eval.load_state_dict(policy.state_dict())  # Just use the trained policy without exploration
+                    policy_eval.eval()
+
+                    # Reset the test environment
+                    test_td = test_env.reset()
+                    total_test_reward = 0.0
+                    done = False
+                    max_test_steps = 100  # Limit test steps to avoid infinite loops
+                    test_step = 0
+
+                    # Run the model on test environment until done or max steps reached
+                    while not done and test_step < max_test_steps:
+                        # Forward pass through policy without exploration
+                        with torch.no_grad():
+                            test_td = policy_eval(test_td)
+
+                        # Step in the test environment
+                        test_td = test_env.step(test_td)
+                        reward = test_td["reward"].item()
+                        total_test_reward += reward
+                        done = test_td["done"].item()
+                        test_step += 1
+
+                    writer.add_scalar("Test performance", total_test_reward, total_count)
+                    print(f"Test performance: Total reward = {total_test_reward}, Steps = {test_step}")
+
+                    # Save model if it's the best so far
+                    if total_test_reward > best_test_reward:
+                        best_test_reward = total_test_reward
+                        print(f"New best model! Saving with reward: {best_test_reward}")
+
+                        # Save the model
+                        model_handler.save_model(
+                            policy=policy,
+                            optim=optim,
+                            metadata={
+                                'total_steps': total_count,
+                                'test_reward': best_test_reward,
+                                'test_steps': test_step,
+                                'num_keywords': num_keywords,
+                                'feature_columns': feature_columns
+                            },
+                            filename=f"best_model.pt"  # Overwrite the same file for best model
+                        )
+                        print(policy.state_dict())
+
+                    print("--- Testing completed ---\n")
+
+        if total_count > 10_000:
+            break
+
+    t1 = time.time()
+
+    print(
+        f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s."
+    )
+    print(f"Best test performance: {best_test_reward}")
+
+    # Run inference with the best model
+    best_model_path = model_handler.find_best_model()
+    if best_model_path:
+        run_inference(best_model_path, dataset_test, device, feature_columns)
+
+#some global variables
 # Select the best device for our machine
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -708,166 +854,18 @@ device = torch.device(
 )
 print(device)
 
+# Define the feature columns
 feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
 
-# Load the organized dataset
-dataset = pd.read_csv('data/organized_dataset.csv')
-# We split it into training and test data
-dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
-
-
-# Initialize Environment
-env = AdOptimizationEnv(dataset_training, device=device)
-state_dim = env.num_features
-
-# Define data and dimensions
-feature_dim = len(feature_columns)
-num_keywords = env.num_keywords
-action_dim = env.action_spec.shape[-1]
-total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
-
-
-# Create the main policy for training
-policy = create_policy(env, feature_dim, num_keywords, device)
-
-# Create the evaluation policy (now using the same architecture)
-policy_eval = create_policy(env, feature_dim, num_keywords, device)
-
-
-exploration_module = EGreedyModule(
-    env.action_spec, annealing_num_steps=100_000, eps_init=0.9, eps_end=0.01
-)
-exploration_module = exploration_module.to(device)
-policy_explore = TensorDictSequential(policy, exploration_module).to(device)
-
-
-init_rand_steps = 5000
-frames_per_batch = 100
-optim_steps = 10
-collector = SyncDataCollector(
-    env,
-    policy_explore,
-    frames_per_batch=frames_per_batch,
-    total_frames=-1,
-    init_random_frames=init_rand_steps,
-)
-rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
-
-
-#actor = QValueActor(value_net, in_keys=["observation"], action_space=spec)
-loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-#optim = Adam(loss.parameters(), lr=0.02)
-optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay for regularization
-updater = SoftUpdate(loss, eps=0.99)
-
-
-total_count = 0
-total_episodes = 0
-t0 = time.time()
-# Evaluation parameters
-evaluation_frequency = 1000  # Run evaluation every 1000 steps
-best_test_reward = float('-inf')
-test_env = AdOptimizationEnv(dataset_test, device=device) # Create a test environment with the test dataset
-model_handler = ModelHandler(save_dir='saves')
-for i, data in enumerate(collector):
-    # Write data in replay buffer
-    step_count = data["step_count"]
-    
-    print(f'data: step_count: {step_count}')
-    rb.extend(data.to(device))
-    #max_length = rb[:]["next", "step_count"].max()
-    max_length = rb[:]["step_count"].max()
-    if len(rb) > init_rand_steps:
-        # Optim loop (we do several optim steps
-        # per batch collected for efficiency)
-        for _ in range(optim_steps):
-            sample = rb.sample(128)
-            total_count += data.numel()
-            
-            # Make sure sample is on the correct device
-            sample = sample.to(device)  # Move the sample to the specified device
-            loss_vals = loss(sample)
-            writer.add_scalar("Loss Value", loss_vals["loss"].item(), total_count)
-            loss_vals["loss"].backward()
-            optim.step()
-            optim.zero_grad()
-            # Update exploration factor
-            exploration_module.step(data.numel())
-            # Update target params
-            updater.step()
-            if i % 10 == 0: # Fixed condition (was missing '== 0')
-                print(f"Max num steps: {max_length}, rb length {len(rb)}")
-            
-            total_episodes += data["next", "done"].sum()
-
-            # Evaluate on test data periodically
-            if total_count % evaluation_frequency == 0:
-                print(f"\n--- Testing model performance after {total_count} training steps ---")
-                # Use policy without exploration for evaluation
-                policy_eval.load_state_dict(policy.state_dict()) # Just use the trained policy without exploration
-                policy_eval.eval()
-                
-                # Reset the test environment
-                test_td = test_env.reset()
-                total_test_reward = 0.0
-                done = False
-                max_test_steps = 100  # Limit test steps to avoid infinite loops
-                test_step = 0
-                
-                # Run the model on test environment until done or max steps reached
-                while not done and test_step < max_test_steps:
-                    # Forward pass through policy without exploration
-                    with torch.no_grad():
-                        test_td = policy_eval(test_td)
-                    
-                    # Step in the test environment
-                    test_td = test_env.step(test_td)
-                    reward = test_td["reward"].item()
-                    total_test_reward += reward
-                    done = test_td["done"].item()
-                    test_step += 1
-                
-                writer.add_scalar("Test performance", total_test_reward, total_count)
-                print(f"Test performance: Total reward = {total_test_reward}, Steps = {test_step}")
-                
-                # Save model if it's the best so far
-                if total_test_reward > best_test_reward:
-                    best_test_reward = total_test_reward
-                    print(f"New best model! Saving with reward: {best_test_reward}")
-
-                    # Save the model
-                    model_handler.save_model(
-                        policy=policy,
-                        optim=optim,
-                        metadata={
-                            'total_steps': total_count,
-                            'test_reward': best_test_reward,
-                            'test_steps': test_step,
-                            'num_keywords': num_keywords,
-                            'feature_columns': feature_columns
-                        },
-                        filename=f"best_model.pt"  # Overwrite the same file for best model
-                    )
-                    print(policy.state_dict())
-                
-                print("--- Testing completed ---\n")
-    
-    if total_count > 10_000:
-        break
-
-t1 = time.time()
-
-print(
-    f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s."
-)
-print(f"Best test performance: {best_test_reward}")
+if __name__ == "__main__":
+    learn()
 
 
 ''''
 Todo:
 - ✅ Clean up the code
 - ✅ Split training and test data (RB)
-- Implement tensorbaord (PK, MAC)
+- ✅ Implement tensorboard (PK, MAC)
 - Implement the visualization (see tensorboard) (EO)
 - ✅ Implement the saving of the model (RB)
 - ✅Implement the inference (RB)
