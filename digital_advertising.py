@@ -4,27 +4,20 @@
 import os
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-import random
 import time
-from typing import Dict, Any, Optional, Union, Tuple
+from typing import Dict, Optional, Any, Tuple
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 from torchrl.envs import EnvBase
 from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite, LazyTensorStorage, ReplayBuffer
-from torchrl.data.replay_buffers import TensorDictReplayBuffer
 from torchrl.objectives import DQNLoss, SoftUpdate
 from torchrl.collectors import SyncDataCollector
 from torchrl.modules import EGreedyModule, MLP, QValueModule
-from tensordict import TensorDict, TensorDictBase
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModule, TensorDictSequential
 
-
-# Tensorboard vorbereiten
-writer = SummaryWriter()
 
 # Generate Realistic Synthetic Data. This is coming from Ilja's code
 # Platzierung:
@@ -703,8 +696,7 @@ def learn():
 
     # Initialize Environment
     env = AdOptimizationEnv(dataset_training, device=device)
-    state_dim = env.num_features
-
+    
     # Define data and dimensions
     feature_dim = len(feature_columns)
     num_keywords = env.num_keywords
@@ -731,11 +723,15 @@ def learn():
         total_frames=-1,
         init_random_frames=init_rand_steps,
     )
-    rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
+    replay_buffer_size = 100_000
+    rb = ReplayBuffer(storage=LazyTensorStorage(replay_buffer_size))
 
     loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-    optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay for regularization
-    updater = SoftUpdate(loss, eps=0.99)
+    lr=0.001
+    weight_decay=1e-5
+    eps=0.99
+    optim = Adam(loss.parameters(), lr=lr, weight_decay=weight_decay)  # Add weight decay for regularization
+    updater = SoftUpdate(loss, eps=eps)
 
     total_count = 0
     total_episodes = 0
@@ -745,6 +741,19 @@ def learn():
     best_test_reward = float('-inf')
     test_env = AdOptimizationEnv(dataset_test, device=device)  # Create a test environment with the test dataset
     model_handler = ModelHandler(save_dir='saves')
+ 
+    # Tensorboard vorbereiten
+    writer = SummaryWriter()
+    # Write the hyperparameters to tensorboard
+    writer.add_text("Feature Columns", str(feature_columns))
+    writer.add_text("Num Keywords", str(num_keywords))
+    writer.add_text("init_rand_steps", str(init_rand_steps))  
+    writer.add_text("frames_per_batch", str(frames_per_batch))
+    writer.add_text("optim_steps", str(optim_steps))
+    writer.add_text("lr", str(lr))
+    writer.add_text("weight_decay", str(weight_decay))
+    writer.add_text("eps", str(eps))
+ 
     for i, data in enumerate(collector):
         # Write data in replay buffer
         step_count = data["step_count"]

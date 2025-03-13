@@ -33,3 +33,17 @@ conda env export > environment.yml
 ````shell
 pip install --force-reinstall -v "numpy==1.26.4"
 ````
+
+## Run
+
+Just execute digital_advertising.py
+
+## See results in tensorboard
+
+````shell
+# - Make sure you are in the correct conda env
+# - Make sure you are in the root directory
+tensorboard --logdir=runs
+````
+
+Open webbrowser at <http://localhost:6006/> (or check the output of the tensorboard start)
