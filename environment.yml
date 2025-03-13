@@ -39,4 +39,5 @@ dependencies:
       - torchvision==0.20.1
       - typing-extensions==4.12.2
       - zipp==3.21.0
+      - tensorboard==2.18.0
 prefix: C:\Users\roger\anaconda3\envs\torchRL
