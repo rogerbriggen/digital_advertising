@@ -121,12 +121,8 @@ def split_dataset_by_ratio(dataset, train_ratio=0.8):
     # Get all unique keywords
     keywords = dataset['keyword'].unique()
     
-    # Fetch the amount of rows for each keyword
-    entries_in_dataset = len(dataset) / keywords.size
-    
     # Split rows into training and test sets
     rows_training = round((len(dataset) * train_ratio) / keywords.size) * keywords.size # Round to the nearest multiple of the number of keywords
-    rows_test = int(len(dataset) - rows_training)
 
     # Create training and test datasets
     train_dataset = dataset.iloc[0:rows_training].reset_index(drop=True)
