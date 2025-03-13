@@ -29,10 +29,12 @@ dependencies:
       - networkx==3.2.1
       - numpy==1.26.4
       - orjson==3.10.15
+      - pandas==1.4.1
       - packaging==24.2
       - pillow==11.1.0
       - pygame==2.1.0
       - sympy==1.13.1
+      - tensorboard==2.18.0
       - tensordict==0.6.1
       - torch==2.5.1
       - torchrl==0.6.0

@@ -1,23 +1,24 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
+import os
+import time
+from typing import Optional
+
 import numpy as np
 import pandas as pd
-import random
-from typing import Optional
-from torchrl.envs import EnvBase
-from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
-from torchrl.data.replay_buffers import TensorDictReplayBuffer
-from torchrl.objectives import DQNLoss
-from torchrl.collectors import SyncDataCollector
-from torchrl.modules import EGreedyModule, MLP, QValueModule
-from tensordict import TensorDict, TensorDictBase
+import torch
+import torch.nn as nn
+from tensordict import TensorDict
 from tensordict.nn import TensorDictModule, TensorDictSequential
+from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
+from torchrl.collectors import SyncDataCollector
+from torchrl.data import LazyTensorStorage, ReplayBuffer
+from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
+from torchrl.envs import EnvBase
+from torchrl.modules import EGreedyModule, MLP, QValueModule
+from torchrl.objectives import DQNLoss, SoftUpdate
 
 # Tensorboard vorbereiten
 writer = SummaryWriter()
@@ -242,10 +243,22 @@ class AdOptimizationEnv(EnvBase):
             terminated=Binary(shape=(1,), dtype=torch.bool),
             truncated=Binary(shape=(1,), dtype=torch.bool)
         )
-        
+
+        self.feature_means = torch.tensor(dataset[feature_columns].mean().values,
+                                          dtype=torch.float32, device=device)
+        self.feature_stds = torch.tensor(dataset[feature_columns].std().values,
+                                         dtype=torch.float32, device=device)
+        # Prevent division by zero
+        self.feature_stds = torch.where(self.feature_stds > 0, self.feature_stds,
+                                        torch.ones_like(self.feature_stds))
+
+        # Add cash normalization
+        self.cash_mean = initial_cash / 2
+        self.cash_std = initial_cash / 4
+
         self.reset()
 
-    def _reset(self, tensordict=None):
+    def _reset(self, tensordict: TensorDict =None):
         """
         Resets the environment to its initial state.
         Args:
@@ -268,36 +281,32 @@ class AdOptimizationEnv(EnvBase):
         #state = torch.tensor(sample[feature_columns].values, dtype=torch.float32).squeeze()
         # Create the initial observation.
         keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
+        keyword_features = (keyword_features - self.feature_means) / self.feature_stds
+        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32,
+                                        device=self.device) - self.cash_mean) / self.cash_std
         obs = TensorDict({
             "keyword_features": keyword_features,  # Current pki for each keyword
-            "cash": torch.tensor(self.cash, dtype=torch.float32, device=self.device),  # Current cash balance
+            "cash": torch.tensor(cash_normalized.clone().detach(), dtype=torch.float32, device=self.device),  # Current cash balance
             "holdings": self.holdings.clone()  # 1 for each keyword if we are holding
         }, batch_size=[])
-        #return TensorDict({"observation": state}, batch_size=[])
-        # step_count initialisieren
         if tensordict is None:
-            tensordict = TensorDict({
-                "done": torch.tensor(False, dtype=torch.bool, device=self.device),
-                "observation": obs,
-                "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
-                "terminated": torch.tensor(False, dtype=torch.bool, device=self.device),
-                "truncated": torch.tensor(False, dtype=torch.bool, device=self.device)
-            },
-            batch_size=[])
+            tensordict = TensorDict({}, batch_size=[])
         else:
-            tensordict["done"] = torch.tensor(False, dtype=torch.bool, device=self.device)
-            tensordict["observation"] = obs
-            tensordict["step_count"] = torch.tensor(self.current_step, dtype=torch.int64, device=self.device)
-            tensordict["terminated"] = torch.tensor(False, dtype=torch.bool, device=self.device)
-            tensordict["truncated"] = torch.tensor(False, dtype=torch.bool, device=self.device)
+            tensordict = tensordict.empty()
+        tensordict = tensordict.update({
+            "done": torch.tensor(False, dtype=torch.bool, device=self.device),
+            "observation": obs,
+            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
+            "terminated": torch.tensor(False, dtype=torch.bool, device=self.device),
+            "truncated": torch.tensor(False, dtype=torch.bool, device=self.device)
+        })
         
         self.obs = obs
-        #print(result)
-        print(f'Reset: Step: {self.current_step}')
+        # print(f'Reset: Step: {self.current_step}')
         return tensordict
 
 
-    def _step(self, tensordict):
+    def _step(self, tensordict: TensorDict):
         """
         Perform a single step in the environment using the provided tensor dictionary.
         Args:
@@ -324,7 +333,23 @@ class AdOptimizationEnv(EnvBase):
 
         current_pki = get_entry_from_dataset(self.dataset, self.current_step)
         #action = tensordict["action"].argmax(dim=-1).item()
-        
+
+
+        # Update cash based on the action
+        ad_roas = 0.0
+        if action_idx < self.num_keywords:
+            # Get the selected keyword's ad spend
+            selected_keyword = current_pki.iloc[action_idx.item()]
+            ad_cost = selected_keyword["ad_spend"]
+            ad_revenue = selected_keyword["conversion_value"]
+            ad_roas = selected_keyword["ad_roas"]
+
+            # we assume the marketing budget is 10% of the cash
+            if (self.cash * 0.1) >= ad_cost:
+                # When enough balance, update cash with ad revenue and deduct ad cost
+                self.cash -= ad_cost
+                self.cash += ad_revenue
+
         # Update holdings based on action (only one keyword is selected)
         new_holdings = torch.zeros_like(self.holdings)
         if action_idx < self.num_keywords:
@@ -332,63 +357,63 @@ class AdOptimizationEnv(EnvBase):
         self.holdings = new_holdings
 
         # Calculate the reward based on the action taken.
-        reward = self._compute_reward(action, current_pki, action_idx)
+        reward = self._compute_reward(action, current_pki, action_idx, ad_roas)
 
          # Move to the next time step.
         self.current_step += 1
-        terminated = self.current_step >= (len(self.dataset) // self.num_keywords) - 2 # -2 to avoid going over the last index
+        terminated = self.cash < 0 or self.current_step >= (len(self.dataset) // self.num_keywords) - 2 # -2 to avoid going over the last index
         truncated = False
 
         # Get next pki for the keywords
         next_keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
+        next_keyword_features = (next_keyword_features - self.feature_means) / self.feature_stds
         # todo: most probably we need to remove some columns from the state so we only have the features for the agent to see... change it also in reset
+        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32,
+                                        device=self.device) - self.cash_mean) / self.cash_std
         next_obs = TensorDict({
             "keyword_features": next_keyword_features,  # next pki for each keyword
-            "cash": torch.tensor(self.cash, dtype=torch.float32, device=self.device),  # Current cash balance
+            "cash": cash_normalized.clone().detach(),  # Current cash balance
             "holdings": self.holdings.clone()
         }, batch_size=[])
         
         # Update the state
         self.obs = next_obs
-        print(f'Step: {self.current_step}, Action: {action_idx}, Reward: {reward}')
-        tensordict["done"] = torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device)
-        
-        tensordict["done"] = torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device)
+        print(f'Step: {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
+
+        # PK: todo: is this really needed? seems tensordict is not used anymore after this assignment
+        tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
         tensordict["observation"] = self.obs
         tensordict["reward"] = torch.tensor(reward, dtype=torch.float32, device=self.device)
         tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device)
-        tensordict["terminated"] = torch.tensor(terminated, dtype=torch.bool, device=self.device)
-        tensordict["truncated"] = torch.tensor(truncated, dtype=torch.bool, device=self.device)
+        tensordict["terminated"] = torch.tensor(bool(terminated), dtype=torch.bool, device=self.device)
+        tensordict["truncated"] = torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
         next = TensorDict({
-            "done": torch.tensor(terminated or truncated, dtype=torch.bool, device=self.device),
+            "done": torch.tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device),
             "observation": next_obs,
             "reward": torch.tensor(reward, dtype=torch.float32, device=self.device),
             "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
-            "terminated": torch.tensor(terminated, dtype=torch.bool, device=self.device),
-            "truncated": torch.tensor(truncated, dtype=torch.bool, device=self.device)
+            "terminated": torch.tensor(bool(terminated), dtype=torch.bool, device=self.device),
+            "truncated": torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
 
         }, batch_size=tensordict.batch_size)
         
         return next
-    
-        
 
-    def _compute_reward(self, action, current_pki, action_idx):
+
+    def _compute_reward(self, action, current_pki, action_idx, ad_roas):
         """Compute reward based on the selected keyword's metrics"""
-        if action_idx == self.num_keywords:
-            return 0.0
-        
-        reward = 0.0
-        sample = current_pki.iloc[action_idx.item()]
-        #cost = sample["ad_spend"]
-        #ctr = sample["paid_ctr"]
-        ad_roas = sample["ad_roas"]
-        if ad_roas >= 5:  # the average roas in our csv is 4.8
-            reward += 1.0
-        else:
-            reward -= 1.0
-            
-        return reward
+        adjusted_reward = 0 if action_idx < self.num_keywords else 1
+        if ad_roas > 0:
+            adjusted_reward = np.log(ad_roas)
+        missing_rewards = []
+        # Iterate through all keywords
+        for i in range(self.num_keywords):
+            sample = current_pki.iloc[i]
+            if action[i] == False:
+                missing_rewards.append(sample["ad_roas"])
+        # Adjust reward based on missing rewards to penalize the agent when not selecting keywords with high(er) ROAS
+        # clipping reduces the variance of the rewards
+        return np.clip(adjusted_reward - np.mean(missing_rewards) * 0.2, -2, 2)
 
     def _set_seed(self, seed: Optional[int]):
         rng = torch.manual_seed(seed)
@@ -457,8 +482,6 @@ class FlattenInputs(nn.Module):
         return combined
 
 
-
-
 # Select the best device for our machine
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -486,15 +509,15 @@ action_dim = env.action_spec.shape[-1]
 total_input_dim = feature_dim * num_keywords + 1 + num_keywords  # features per keyword + cash + holdings
 
 value_mlp = MLP(
-    in_features=total_input_dim, 
-    out_features=action_dim, 
+    in_features=total_input_dim,
+    out_features=action_dim,
     num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
     activation_class=nn.ReLU  # ReLU often performs better than Tanh
 )
 
 value_mlp_eval = MLP(
-    in_features=total_input_dim, 
-    out_features=action_dim, 
+    in_features=total_input_dim,
+    out_features=action_dim,
     num_cells=[256, 256, 128, 64],  # Deeper and wider architecture
     activation_class=nn.ReLU  # ReLU often performs better than Tanh
 )
@@ -525,12 +548,6 @@ exploration_module = EGreedyModule(
 exploration_module = exploration_module.to(device)
 policy_explore = TensorDictSequential(policy, exploration_module).to(device)
 
-
-from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer
-from torch.optim import Adam
-from torchrl.objectives import DQNLoss, SoftUpdate
-
 init_rand_steps = 5000
 frames_per_batch = 100
 optim_steps = 10
@@ -550,8 +567,6 @@ loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=T
 optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay for regularization
 updater = SoftUpdate(loss, eps=0.99)
 
-
-import time
 total_count = 0
 total_episodes = 0
 t0 = time.time()
@@ -562,8 +577,8 @@ test_env = AdOptimizationEnv(dataset_test, device=device) # Create a test enviro
 for i, data in enumerate(collector):
     # Write data in replay buffer
     step_count = data["step_count"]
-    
-    print(f'data: step_count: {step_count}')
+
+    # print(f'data: step_count: {step_count}')
     rb.extend(data.to(device))
     #max_length = rb[:]["next", "step_count"].max()
     max_length = rb[:]["step_count"].max()
@@ -573,7 +588,7 @@ for i, data in enumerate(collector):
         for _ in range(optim_steps):
             sample = rb.sample(128)
             total_count += data.numel()
-            
+
             # Make sure sample is on the correct device
             sample = sample.to(device)  # Move the sample to the specified device
             loss_vals = loss(sample)
@@ -587,7 +602,7 @@ for i, data in enumerate(collector):
             updater.step()
             if i % 10 == 0: # Fixed condition (was missing '== 0')
                 print(f"Max num steps: {max_length}, rb length {len(rb)}")
-            
+
             total_episodes += data["next", "done"].sum()
 
             # Evaluate on test data periodically
@@ -608,8 +623,18 @@ for i, data in enumerate(collector):
                 while not done and test_step < max_test_steps:
                     # Forward pass through policy without exploration
                     with torch.no_grad():
+                        # Get Q-values
                         test_td = policy_eval(test_td)
-                    
+
+                        # Check and handle NaN values in Q-values
+                        q_values = test_td["action_value"]
+                        best_idx = q_values.argmax(dim=-1).item()
+
+                        # Create one-hot action
+                        action = torch.zeros_like(q_values)
+                        action[..., best_idx] = 1
+                        test_td["action"] = action
+
                     # Step in the test environment
                     test_td = test_env.step(test_td)
                     reward = test_td["reward"].item()
@@ -626,7 +651,6 @@ for i, data in enumerate(collector):
                     print(f"New best model! Saving with reward: {best_test_reward}")
 
                     # Create the directory if it doesn't exist
-                    import os
                     os.makedirs('saves', exist_ok=True)
                     # Save the model
                     torch.save({
@@ -635,8 +659,8 @@ for i, data in enumerate(collector):
                         'total_steps': total_count,
                         'test_reward': best_test_reward,
                     }, 'saves/best_model.pt')
-                    print(policy.state_dict())
-                
+                    # print(policy.state_dict())
+
                 print("--- Testing completed ---\n")
     
     if total_count > 10_000:
