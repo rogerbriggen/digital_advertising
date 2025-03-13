@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,16 +9,19 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 import random
-from typing import Optional
+import time
+from typing import Dict, Any, Optional, Union, Tuple
+from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
 from torchrl.envs import EnvBase
-from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
+from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite, LazyTensorStorage, ReplayBuffer
 from torchrl.data.replay_buffers import TensorDictReplayBuffer
-from torchrl.objectives import DQNLoss
+from torchrl.objectives import DQNLoss, SoftUpdate
 from torchrl.collectors import SyncDataCollector
 from torchrl.modules import EGreedyModule, MLP, QValueModule
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, TensorDictSequential
-from torch.utils.tensorboard import SummaryWriter
+
 
 # Tensorboard vorbereiten
 writer = SummaryWriter()
@@ -458,6 +462,154 @@ class FlattenInputs(nn.Module):
 
 
 
+class ModelHandler:
+    """
+    A class to handle saving and loading of models for the digital advertising system.
+    
+    This class provides functionality to:
+    1. Save models during training based on performance criteria
+    2. Load models for inference or continued training
+    3. Manage model versioning and metadata
+    """
+    
+    def __init__(self, save_dir: str = 'saves'):
+        """
+        Initialize the ModelHandler.
+        
+        Args:
+            save_dir (str): Directory to save models to and load models from.
+        """
+        self.save_dir = save_dir
+        os.makedirs(save_dir, exist_ok=True)
+    
+    def save_model(self, 
+                  policy: TensorDictSequential,
+                  optim: Optional[torch.optim.Optimizer] = None,
+                  metadata: Dict[str, Any] = None,
+                  filename: Optional[str] = None) -> str:
+        """
+        Save the model and related data.
+        
+        Args:
+            policy: The policy model to save
+            optim: Optional optimizer to save for continued training
+            metadata: Additional information to save with the model
+            filename: Custom filename, if None generates a timestamped name
+            
+        Returns:
+            str: Path to the saved model file
+        """
+        if metadata is None:
+            metadata = {}
+            
+        # Create a save dictionary with the policy
+        save_dict = {
+            'policy_state_dict': policy.state_dict(),
+            'metadata': metadata,
+            'timestamp': time.time()
+        }
+        
+        # Add optimizer if provided
+        if optim is not None:
+            save_dict['optimizer_state_dict'] = optim.state_dict()
+            
+        # Generate filename if not provided
+        if filename is None:
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            reward = metadata.get('test_reward', 0)
+            steps = metadata.get('total_steps', 0)
+            filename = f"model_{timestamp}_reward{reward:.2f}_steps{steps}.pt"
+        
+        # Ensure file has .pt extension
+        if not filename.endswith('.pt'):
+            filename += '.pt'
+            
+        filepath = os.path.join(self.save_dir, filename)
+        
+        # Save the model
+        torch.save(save_dict, filepath)
+        print(f"Model saved to {filepath}")
+        
+        return filepath
+    
+    def load_model(self, 
+                  policy: TensorDictSequential,
+                  filepath: str, 
+                  device: torch.device,
+                  optim: Optional[torch.optim.Optimizer] = None,
+                  inference_only: bool = False) -> Tuple[TensorDictSequential, Dict[str, Any]]:
+        """
+        Load a model from a file.
+        
+        Args:
+            policy: The policy model architecture to load weights into
+            filepath: Path to the model file
+            device: Device to load the model to
+            optim: Optional optimizer to load state into
+            inference_only: If True, sets model to eval mode and doesn't load optimizer
+            
+        Returns:
+            Tuple: (loaded_policy, metadata_dict)
+        """
+        # Check file exists
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Model file not found: {filepath}")
+            
+        # Load the checkpoint
+        checkpoint = torch.load(filepath, map_location=device)
+        
+        # Load the policy state dict
+        policy.load_state_dict(checkpoint['policy_state_dict'])
+        
+        # Set to evaluation mode if inference only
+        if inference_only:
+            policy.eval()
+        
+        # Load optimizer if provided and available in checkpoint
+        if optim is not None and not inference_only and 'optimizer_state_dict' in checkpoint:
+            optim.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+        # Get metadata
+        metadata = checkpoint.get('metadata', {})
+        
+        print(f"Model loaded from {filepath}")
+        if 'test_reward' in metadata:
+            print(f"Test reward: {metadata['test_reward']}")
+        if 'total_steps' in metadata:
+            print(f"Training steps: {metadata['total_steps']}")
+            
+        return policy, metadata
+    
+    def find_best_model(self) -> Optional[str]:
+        """
+        Find the best performing model in the save directory.
+        
+        Returns:
+            str or None: Path to the best model file, or None if no models found
+        """
+        best_reward = float('-inf')
+        best_model_path = None
+        
+        for filename in os.listdir(self.save_dir):
+            if filename.endswith('.pt'):
+                filepath = os.path.join(self.save_dir, filename)
+                try:
+                    checkpoint = torch.load(filepath, map_location='cpu')
+                    metadata = checkpoint.get('metadata', {})
+                    reward = metadata.get('test_reward', float('-inf'))
+                    
+                    if reward > best_reward:
+                        best_reward = reward
+                        best_model_path = filepath
+                except Exception as e:
+                    print(f"Error loading {filepath}: {e}")
+        
+        if best_model_path:
+            print(f"Found best model: {best_model_path} with reward: {best_reward}")
+        else:
+            print("No valid models found.")
+            
+        return best_model_path
 
 # Select the best device for our machine
 device = torch.device(
@@ -526,11 +678,6 @@ exploration_module = exploration_module.to(device)
 policy_explore = TensorDictSequential(policy, exploration_module).to(device)
 
 
-from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer
-from torch.optim import Adam
-from torchrl.objectives import DQNLoss, SoftUpdate
-
 init_rand_steps = 5000
 frames_per_batch = 100
 optim_steps = 10
@@ -551,7 +698,6 @@ optim = Adam(loss.parameters(), lr=0.001, weight_decay=1e-5)  # Add weight decay
 updater = SoftUpdate(loss, eps=0.99)
 
 
-import time
 total_count = 0
 total_episodes = 0
 t0 = time.time()
@@ -559,6 +705,7 @@ t0 = time.time()
 evaluation_frequency = 1000  # Run evaluation every 1000 steps
 best_test_reward = float('-inf')
 test_env = AdOptimizationEnv(dataset_test, device=device) # Create a test environment with the test dataset
+model_handler = ModelHandler(save_dir='saves')
 for i, data in enumerate(collector):
     # Write data in replay buffer
     step_count = data["step_count"]
@@ -625,16 +772,19 @@ for i, data in enumerate(collector):
                     best_test_reward = total_test_reward
                     print(f"New best model! Saving with reward: {best_test_reward}")
 
-                    # Create the directory if it doesn't exist
-                    import os
-                    os.makedirs('saves', exist_ok=True)
                     # Save the model
-                    torch.save({
-                        'policy_state_dict': policy.state_dict(),
-                        'optimizer_state_dict': optim.state_dict(),
-                        'total_steps': total_count,
-                        'test_reward': best_test_reward,
-                    }, 'saves/best_model.pt')
+                    model_handler.save_model(
+                        policy=policy,
+                        optim=optim,
+                        metadata={
+                            'total_steps': total_count,
+                            'test_reward': best_test_reward,
+                            'test_steps': test_step,
+                            'num_keywords': num_keywords,
+                            'feature_columns': feature_columns
+                        },
+                        filename=f"best_model.pt"  # Overwrite the same file for best model
+                    )
                     print(policy.state_dict())
                 
                 print("--- Testing completed ---\n")
@@ -652,11 +802,11 @@ print(f"Best test performance: {best_test_reward}")
 
 ''''
 Todo:
-- Clean up the code
-- Split training and test data (RB)
+- ✅ Clean up the code
+- ✅ Split training and test data (RB)
 - Implement tensorbaord (PK, MAC)
 - Implement the visualization (see tensorboard) (EO)
-- Implement the saving of the model (RB)
+- ✅ Implement the saving of the model (RB)
 - Implement the inference (RB)
 - Implement the optuna hyperparameter tuning (UT)
 '''''
