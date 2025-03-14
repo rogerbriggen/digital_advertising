@@ -924,6 +924,7 @@ def learn(params=None, train_data=None, test_data=None):
     best_model_path = model_handler.find_best_model()
     if best_model_path:
         run_inference(best_model_path, dataset_test, device, feature_columns)
+    return best_test_reward
 
 #some global variables
 # Select the best device for our machine
