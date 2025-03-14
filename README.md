@@ -2,9 +2,7 @@
 This project implements a reinforcement learning approach to optimize digital advertising keyword investment decisions. The system learns to make intelligent bidding decisions across multiple keywords, maximizing return on ad spend (ROAS) while operating within budget constraints.
 
 ## Project Overview
-
-The project consists of four main components:
-
+The project consists of five main components:
 1. **Core RL Environment and Training (`digital_advertising.py`)** - Implements the reinforcement learning environment and training pipeline
 2. **Hyperparameter Tuning (`hyperparameter_tuning.py`)** - Optimizes model hyperparameters using Optuna
 3. **Performance Visualization (`visualize_ad_performance.py`)** - Creates detailed HTML reports with visualizations of model performance
@@ -16,11 +14,9 @@ The project consists of four main components:
 - [PPC Campaign Performance Data](https://www.kaggle.com/datasets/aashwinkumar/ppc-campaign-performance-data)
 
 ## Environment
-
 The conda environment is named torchrl_ads.
 
 ## Setup and Installation
-
 ```bash
 # Clone the repository
 git clone https://github.com/mac-christ/digital_advertising.git
@@ -35,9 +31,7 @@ pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https
 ```
 
 ## Running the Scripts
-
 ### 1. Core RL Training (`digital_advertising.py`)
-
 This script implements the core reinforcement learning environment and training pipeline.
 
 **Key Features:**
@@ -62,7 +56,6 @@ tensorboard --logdir=runs
 Open webbrowser at <http://localhost:6006/> (or check the output of the tensorboard start)
 
 ### 2. Hyperparameter Tuning (`hyperparameter_tuning.py`)
-
 Optimizes the model's hyperparameters using Optuna, a hyperparameter optimization framework.
 
 **Key Features:**
@@ -92,7 +85,6 @@ tensorboard --logdir=runs
 ```
 
 ### 3. Performance Visualization (`visualize_ad_performance.py`)
-
 Creates comprehensive HTML reports with visualizations of the model's performance.
 
 **Key Features:**
@@ -121,7 +113,6 @@ python visualize_ad_performance.py --logdir runs --output_dir visualization_resu
 - `--num_samples`: Number of samples for synthetic data generation (default: 1000)
 
 ### 4. Training Analysis (`tensorboard-analyzer.py`)
-
 Provides detailed analysis of the training process from TensorBoard logs.
 
 **Key Features:**
@@ -163,7 +154,6 @@ This will start a local web server at http://127.0.0.1:8050/ where you can acces
 
 
 ## Project Structure
-
 ```
 digital_advertising/
 ├── digital_advertising.py        # Core RL environment and training
@@ -178,7 +168,6 @@ digital_advertising/
 ```
 
 ## Key Technologies
-
 - **PyTorch & TorchRL**: For implementing the reinforcement learning models
 - **TensorBoard**: For logging training metrics
 - **Optuna**: For hyperparameter optimization
@@ -187,7 +176,6 @@ digital_advertising/
 - **Plotly & Dash**: For interactive data visualization and web dashboards
 
 ## Example Workflow
-
 A typical workflow might look like:
 
 1. Run the core training: `python digital_advertising.py`
