@@ -37,10 +37,12 @@ def objective(trial, dataset):
     }
     
     # Split dataset
-    train_data, test_data = split_dataset_by_ratio(dataset)
+    if dataset is None:
+        dataset = generate_synthetic_data(1000)
+    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
     
     # Run training with the sampled hyperparameters
-    best_reward = learn(params, train_data, test_data)
+    best_reward = learn(params, dataset_training, dataset_test)
     
     return best_reward
 
