@@ -74,8 +74,8 @@ def parse_tensorboard_logs(logdir):
     
     # Check if directory exists
     if not os.path.exists(logdir):
-        print(f"Error: TensorBoard log directory {logdir} does not exist")
-        return None
+        print(f"Warning: TensorBoard log directory {logdir} does not exist")
+        return {}
     
     metrics = defaultdict(list)
     
@@ -87,8 +87,9 @@ def parse_tensorboard_logs(logdir):
                 event_files.append(os.path.join(root, file))
     
     if not event_files:
-        print(f"Error: No TensorBoard event files found in {logdir}")
-        return None
+        print(f"Warning: No TensorBoard event files found in {logdir}")
+        print("Will proceed with dataset analysis only")
+        return {}
     
     print(f"Found {len(event_files)} event files")
     
@@ -97,51 +98,68 @@ def parse_tensorboard_logs(logdir):
         print(f"Processing {event_file}")
         
         try:
-            event_acc = EventAccumulator(event_file)
-            event_acc.Reload()
+            # Use a more lenient reload approach with a timeout
+            event_acc = EventAccumulator(event_file, size_guidance={
+                'scalars': 0,  # 0 means load all
+                'tensors': 0
+            })
+            try:
+                event_acc.Reload()
+            except Exception as e:
+                print(f"Warning: Error during reload: {e}. Attempting to continue anyway.")
             
             # Get available tags (metrics)
-            tags = event_acc.Tags()
-            scalar_tags = tags.get('scalars', [])
-            
-            print(f"Available scalar metrics: {scalar_tags}")
-            
-            # Extract data for each scalar tag
-            for tag in scalar_tags:
-                events = event_acc.Scalars(tag)
+            try:
+                tags = event_acc.Tags()
+                scalar_tags = tags.get('scalars', [])
                 
-                # For each event, extract step, wall_time, and value
-                for event in events:
-                    metrics[tag].append({
-                        'step': event.step,
-                        'time': event.wall_time,
-                        'value': event.value
-                    })
-                    
-            # Also extract text data if available
-            text_tags = tags.get('tensors', [])
-            for tag in text_tags:
-                if 'Feature Columns' in tag or 'Num Keywords' in tag:
+                print(f"Available scalar metrics: {scalar_tags}")
+                
+                # Extract data for each scalar tag
+                for tag in scalar_tags:
                     try:
-                        events = event_acc.Tensors(tag)
+                        events = event_acc.Scalars(tag)
+                        
+                        # For each event, extract step, wall_time, and value
                         for event in events:
-                            # Extract text content from tensor event
                             metrics[tag].append({
                                 'step': event.step,
                                 'time': event.wall_time,
-                                'value': str(event.tensor_proto)
+                                'value': event.value
                             })
                     except Exception as e:
-                        print(f"Error extracting text data for {tag}: {e}")
+                        print(f"Warning: Error extracting scalar {tag}: {e}")
+                        
+                # Also extract text data if available
+                text_tags = tags.get('tensors', [])
+                for tag in text_tags:
+                    if 'Feature Columns' in tag or 'Num Keywords' in tag:
+                        try:
+                            events = event_acc.Tensors(tag)
+                            for event in events:
+                                # Extract text content from tensor event
+                                metrics[tag].append({
+                                    'step': event.step,
+                                    'time': event.wall_time,
+                                    'value': str(event.tensor_proto)
+                                })
+                        except Exception as e:
+                            print(f"Warning: Error extracting text data for {tag}: {e}")
+            except Exception as e:
+                print(f"Warning: Error getting tags: {e}")
                 
         except Exception as e:
-            print(f"Error processing event file {event_file}: {e}")
+            print(f"Warning: Error processing event file {event_file}: {e}")
+            print("Continuing with next file.")
     
     # Convert lists to DataFrames for easier analysis
     metric_dfs = {}
     for tag, events in metrics.items():
         if events:
-            metric_dfs[tag] = pd.DataFrame(events)
+            try:
+                metric_dfs[tag] = pd.DataFrame(events)
+            except Exception as e:
+                print(f"Warning: Could not convert {tag} to DataFrame: {e}")
             
     return metric_dfs
 
@@ -281,19 +299,21 @@ def visualize_keyword_performance(dataset, output_dir):
     plt.close()
     saved_plots.append(roas_plot_path)
     
-    # 2. CTR vs Competitiveness
+    # 2. CTR vs Competitiveness - Using standard scatter plot instead of jointplot
     plt.figure(figsize=(12, 8))
-    sns.jointplot(
-        data=dataset,
-        x="competitiveness",
-        y="paid_ctr",
-        hue="organic_rank",
-        kind="scatter",
-        height=8,
-        ratio=5,
-        palette="coolwarm"
+    scatter = plt.scatter(
+        dataset["competitiveness"],
+        dataset["paid_ctr"],
+        c=dataset["organic_rank"],
+        cmap="coolwarm",
+        alpha=0.7,
+        s=100
     )
-    plt.suptitle("Click-Through Rate vs Keyword Competitiveness", y=1.02)
+    plt.colorbar(scatter, label="Organic Rank")
+    plt.title("Click-Through Rate vs Keyword Competitiveness")
+    plt.xlabel("Competitiveness")
+    plt.ylabel("Paid CTR")
+    plt.grid(True, alpha=0.3)
     
     ctr_plot_path = os.path.join(output_dir, "ctr_vs_competitiveness.png")
     plt.savefig(ctr_plot_path, dpi=300, bbox_inches="tight")
@@ -683,61 +703,88 @@ def main():
         torch.cuda.manual_seed(42)
     torch.manual_seed(42)
     
-    # Parse TensorBoard logs
-    metric_dfs = parse_tensorboard_logs(args.logdir)
+    # Parse TensorBoard logs with error handling
+    try:
+        metric_dfs = parse_tensorboard_logs(args.logdir)
+    except Exception as e:
+        print(f"Warning: Error parsing TensorBoard logs: {e}")
+        print("Proceeding with dataset analysis only.")
+        metric_dfs = {}
     
     # Extract parameters from logs if available
     extracted_params = {}
     if metric_dfs:
         for tag in metric_dfs:
-            if 'text' in tag.lower():
-                for _, row in metric_dfs[tag].iterrows():
-                    # Attempt to extract parameter from text
-                    # This is approximate as text format can vary
-                    text_value = str(row['value'])
-                    param_match = re.search(r'([a-zA-Z_]+):\s*([\d\.]+)', text_value)
-                    if param_match:
-                        param_name, param_value = param_match.groups()
-                        extracted_params[param_name] = param_value
+            if isinstance(tag, str) and 'text' in tag.lower():
+                try:
+                    for _, row in metric_dfs[tag].iterrows():
+                        # Attempt to extract parameter from text
+                        text_value = str(row['value'])
+                        param_match = re.search(r'([a-zA-Z_]+):\s*([\d\.]+)', text_value)
+                        if param_match:
+                            param_name, param_value = param_match.groups()
+                            extracted_params[param_name] = param_value
+                except Exception as e:
+                    print(f"Warning: Error extracting parameters from {tag}: {e}")
     
-    # Load or generate dataset
-    if args.dataset and os.path.exists(args.dataset):
-        print(f"Loading dataset from {args.dataset}")
-        dataset = pd.read_csv(args.dataset)
-    else:
-        print(f"Generating synthetic dataset with {args.num_samples} samples")
-        dataset = generate_synthetic_data(args.num_samples)
-        dataset_path = os.path.join(args.output_dir, "synthetic_ad_data.csv")
-        dataset.to_csv(dataset_path, index=False)
-        print(f"Synthetic dataset saved to {dataset_path}")
+    # Load or generate dataset with error handling
+    try:
+        if args.dataset and os.path.exists(args.dataset):
+            print(f"Loading dataset from {args.dataset}")
+            dataset = pd.read_csv(args.dataset)
+        else:
+            print(f"Generating synthetic dataset with {args.num_samples} samples")
+            dataset = generate_synthetic_data(args.num_samples)
+            dataset_path = os.path.join(args.output_dir, "synthetic_ad_data.csv")
+            dataset.to_csv(dataset_path, index=False)
+            print(f"Synthetic dataset saved to {dataset_path}")
+    except Exception as e:
+        print(f"Error with dataset: {e}")
+        print("Generating emergency synthetic dataset")
+        dataset = generate_synthetic_data(100)  # Smaller emergency dataset
     
-    # Generate visualizations
+    # Generate visualizations with error handling
     all_plots = {}
     
     # 1. Training metrics from TensorBoard
     if metric_dfs:
-        all_plots["Training Progress"] = visualize_training_metrics(
-            metric_dfs, 
-            os.path.join(args.output_dir, "training_metrics")
-        )
+        try:
+            all_plots["Training Progress"] = visualize_training_metrics(
+                metric_dfs, 
+                os.path.join(args.output_dir, "training_metrics")
+            )
+        except Exception as e:
+            print(f"Warning: Error visualizing training metrics: {e}")
+            all_plots["Training Progress"] = []
     
     # 2. Keyword performance metrics
-    all_plots["Keyword Performance Analysis"] = visualize_keyword_performance(
-        dataset,
-        os.path.join(args.output_dir, "keyword_performance")
-    )
+    try:
+        all_plots["Keyword Performance Analysis"] = visualize_keyword_performance(
+            dataset,
+            os.path.join(args.output_dir, "keyword_performance")
+        )
+    except Exception as e:
+        print(f"Warning: Error visualizing keyword performance: {e}")
+        all_plots["Keyword Performance Analysis"] = []
     
     # 3. Investment decision strategies
-    all_plots["Investment Decision Strategies"] = visualize_investment_decision_strategies(
-        dataset,
-        os.path.join(args.output_dir, "decision_strategies")
-    )
+    try:
+        all_plots["Investment Decision Strategies"] = visualize_investment_decision_strategies(
+            dataset,
+            os.path.join(args.output_dir, "decision_strategies")
+        )
+    except Exception as e:
+        print(f"Warning: Error visualizing investment strategies: {e}")
+        all_plots["Investment Decision Strategies"] = []
     
     # Create HTML report with all visualizations
-    html_report_path = create_html_report(all_plots, args.output_dir, extracted_params)
+    try:
+        html_report_path = create_html_report(all_plots, args.output_dir, extracted_params)
+        print(f"\nVisualization complete!")
+        print(f"HTML report available at: {html_report_path}")
+    except Exception as e:
+        print(f"Warning: Error creating HTML report: {e}")
     
-    print(f"\nVisualization complete!")
-    print(f"HTML report available at: {html_report_path}")
     print(f"All visualizations saved to {args.output_dir}")
 
 
