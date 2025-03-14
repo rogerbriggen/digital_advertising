@@ -1,517 +1,745 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import torch
-import torch.nn as nn
+import os
+import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
-import argparse
+import torch
 from datetime import datetime
-from tensordict import TensorDict
+from pathlib import Path
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+from collections import defaultdict
+import re
+import sys
 
-# Import classes from integrated_ad_optimization.py
-# Make sure this script is in the same directory as integrated_ad_optimization.py or modify the import path
-from integrated_ad_optimization import (
-    FlattenInputs, AdOptimizationEnv, feature_columns, TensorDictModule, TensorDictSequential,
-    MLP, QValueModule, generate_synthetic_data, set_all_seeds
-)
+# Add the directory containing digital_advertising.py to the Python path
+# This allows importing without modifying the original file
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def load_model(model_path, env):
-    """
-    Load a saved model and recreate the policy network.
-    
-    Args:
-        model_path (str): Path to the saved model.
-        env (AdOptimizationEnv): Environment to use for determining model dimensions.
-        
-    Returns:
-        TensorDictSequential: The loaded policy network.
-    """
-    # Load the saved model
-    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-    
-    # Calculate input size based on environment dimensions
-    input_size = env.num_keywords * env.num_features + 1 + env.num_keywords  # features + cash + holdings
-    output_size = env.action_spec.n  # Number of actions (num_keywords + 1)
-    
-    # Create neural network architecture
-    flatten_module = TensorDictModule(
-        FlattenInputs(),
-        in_keys=[("observation", "keyword_features"), ("observation", "cash"), ("observation", "holdings")],
-        out_keys=["flattened_input"]
+# Try to import necessary components from digital_advertising.py
+try:
+    from digital_advertising import (
+        ModelHandler, AdOptimizationEnv, generate_synthetic_data, feature_columns
     )
+    print("Successfully imported components from digital_advertising.py")
+except ImportError as e:
+    print(f"Warning: Could not import from digital_advertising.py: {e}")
+    print("Will use simplified functionality without direct model integration")
     
-    value_mlp = MLP(in_features=input_size, out_features=output_size, num_cells=[128, 64])
-    value_net = TensorDictModule(value_mlp, in_keys=["flattened_input"], out_keys=["action_value"])
-    policy = TensorDictSequential(flatten_module, value_net, QValueModule(spec=env.action_spec))
+    # Define minimal versions of required components for visualization
+    feature_columns = [
+        "competitiveness", "difficulty_score", "organic_rank", "organic_clicks", 
+        "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", 
+        "ad_roas", "conversion_rate", "cost_per_click"
+    ]
     
-    # Load the saved weights
-    policy.load_state_dict(checkpoint['model_state_dict'])
-    
-    return policy
+    def generate_synthetic_data(num_samples=1000):
+        """Generate synthetic ad data for visualization if original function not available"""
+        data = {
+            "keyword": [f"Keyword_{i}" for i in range(num_samples)],
+            "competitiveness": np.random.uniform(0, 1, num_samples),
+            "difficulty_score": np.random.uniform(0, 1, num_samples),
+            "organic_rank": np.random.randint(1, 11, num_samples),
+            "organic_clicks": np.random.randint(50, 5000, num_samples),
+            "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),
+            "paid_clicks": np.random.randint(10, 3000, num_samples),
+            "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),
+            "ad_spend": np.random.uniform(10, 10000, num_samples),
+            "ad_conversions": np.random.randint(0, 500, num_samples),
+            "ad_roas": np.random.uniform(0.5, 5, num_samples),
+            "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),
+            "cost_per_click": np.random.uniform(0.1, 10, num_samples),
+            "cost_per_acquisition": np.random.uniform(5, 500, num_samples),
+            "previous_recommendation": np.random.choice([0, 1], size=num_samples),
+            "impression_share": np.random.uniform(0.1, 1.0, num_samples),
+            "conversion_value": np.random.uniform(0, 10000, num_samples)
+        }
+        return pd.DataFrame(data)
 
-def visualize_keyword_decision_map(dataset, policy, env, output_dir="keyword_analysis", num_keywords=10):
+
+def parse_tensorboard_logs(logdir):
     """
-    Create a visualization showing how the agent decides on keyword investments
-    across different keyword metrics.
+    Parse TensorBoard event files and extract metrics.
     
     Args:
-        dataset (pd.DataFrame): Dataset containing keyword metrics.
-        policy (TensorDictSequential): Trained policy network.
-        env (AdOptimizationEnv): Environment for ad optimization.
-        output_dir (str): Directory to save the visualizations.
-        num_keywords (int): Number of keywords to analyze.
+        logdir (str): Path to TensorBoard log directory
         
     Returns:
-        str: Path to the saved plot.
+        dict: Dictionary containing extracted metrics
+    """
+    print(f"Parsing TensorBoard logs from {logdir}")
+    
+    # Check if directory exists
+    if not os.path.exists(logdir):
+        print(f"Error: TensorBoard log directory {logdir} does not exist")
+        return None
+    
+    metrics = defaultdict(list)
+    
+    # Find all event files in the directory
+    event_files = []
+    for root, dirs, files in os.walk(logdir):
+        for file in files:
+            if file.startswith("events.out.tfevents"):
+                event_files.append(os.path.join(root, file))
+    
+    if not event_files:
+        print(f"Error: No TensorBoard event files found in {logdir}")
+        return None
+    
+    print(f"Found {len(event_files)} event files")
+    
+    # Process each event file
+    for event_file in event_files:
+        print(f"Processing {event_file}")
+        
+        try:
+            event_acc = EventAccumulator(event_file)
+            event_acc.Reload()
+            
+            # Get available tags (metrics)
+            tags = event_acc.Tags()
+            scalar_tags = tags.get('scalars', [])
+            
+            print(f"Available scalar metrics: {scalar_tags}")
+            
+            # Extract data for each scalar tag
+            for tag in scalar_tags:
+                events = event_acc.Scalars(tag)
+                
+                # For each event, extract step, wall_time, and value
+                for event in events:
+                    metrics[tag].append({
+                        'step': event.step,
+                        'time': event.wall_time,
+                        'value': event.value
+                    })
+                    
+            # Also extract text data if available
+            text_tags = tags.get('tensors', [])
+            for tag in text_tags:
+                if 'Feature Columns' in tag or 'Num Keywords' in tag:
+                    try:
+                        events = event_acc.Tensors(tag)
+                        for event in events:
+                            # Extract text content from tensor event
+                            metrics[tag].append({
+                                'step': event.step,
+                                'time': event.wall_time,
+                                'value': str(event.tensor_proto)
+                            })
+                    except Exception as e:
+                        print(f"Error extracting text data for {tag}: {e}")
+                
+        except Exception as e:
+            print(f"Error processing event file {event_file}: {e}")
+    
+    # Convert lists to DataFrames for easier analysis
+    metric_dfs = {}
+    for tag, events in metrics.items():
+        if events:
+            metric_dfs[tag] = pd.DataFrame(events)
+            
+    return metric_dfs
+
+
+def visualize_training_metrics(metric_dfs, output_dir):
+    """
+    Create visualizations based on training metrics from TensorBoard.
+    
+    Args:
+        metric_dfs (dict): Dictionary of DataFrames containing metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
+    """
+    if not metric_dfs:
+        print("No metrics data available for visualization")
+        return []
+    
+    os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
+    
+    # Check for key metrics
+    loss_metric = next((m for m in metric_dfs.keys() if 'loss' in m.lower()), None)
+    test_perf_metric = next((m for m in metric_dfs.keys() if 'test' in m.lower() and 'performance' in m.lower()), None)
+    
+    # 1. Plot training loss
+    if loss_metric:
+        loss_df = metric_dfs[loss_metric]
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(loss_df['step'], loss_df['value'])
+        plt.title('Training Loss Over Time')
+        plt.xlabel('Training Steps')
+        plt.ylabel('Loss Value')
+        plt.grid(True, alpha=0.3)
+        
+        loss_plot_path = os.path.join(output_dir, "training_loss.png")
+        plt.savefig(loss_plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        saved_plots.append(loss_plot_path)
+        print(f"Training loss plot saved to {loss_plot_path}")
+        
+    # 2. Plot test performance
+    if test_perf_metric:
+        test_df = metric_dfs[test_perf_metric]
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(test_df['step'], test_df['value'])
+        plt.title('Test Performance Over Training')
+        plt.xlabel('Training Steps')
+        plt.ylabel('Test Reward')
+        plt.grid(True, alpha=0.3)
+        
+        perf_plot_path = os.path.join(output_dir, "test_performance.png")
+        plt.savefig(perf_plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        saved_plots.append(perf_plot_path)
+        print(f"Test performance plot saved to {perf_plot_path}")
+        
+    # 3. Combined metrics plot if both are available
+    if loss_metric and test_perf_metric:
+        loss_df = metric_dfs[loss_metric]
+        test_df = metric_dfs[test_perf_metric]
+        
+        fig, ax1 = plt.subplots(figsize=(12, 7))
+        
+        color1 = 'tab:red'
+        ax1.set_xlabel('Training Steps')
+        ax1.set_ylabel('Loss Value', color=color1)
+        ax1.plot(loss_df['step'], loss_df['value'], color=color1, alpha=0.7, label='Training Loss')
+        ax1.tick_params(axis='y', labelcolor=color1)
+        
+        ax2 = ax1.twinx()
+        color2 = 'tab:blue'
+        ax2.set_ylabel('Test Reward', color=color2)
+        ax2.plot(test_df['step'], test_df['value'], color=color2, alpha=0.7, label='Test Performance')
+        ax2.tick_params(axis='y', labelcolor=color2)
+        
+        # Add legend
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center')
+        
+        plt.title('Training Progress')
+        plt.grid(True, alpha=0.3)
+        
+        combined_plot_path = os.path.join(output_dir, "training_progress.png")
+        plt.savefig(combined_plot_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        saved_plots.append(combined_plot_path)
+        print(f"Combined training progress plot saved to {combined_plot_path}")
+    
+    return saved_plots
+
+
+def visualize_keyword_performance(dataset, output_dir):
+    """
+    Create visualizations of keyword metrics in the dataset.
+    
+    Args:
+        dataset (pd.DataFrame): Dataset containing keyword metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
     """
     os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
     
-    # Set the model to evaluation mode
-    policy.eval()
-    
-    # Select a subset of keywords to analyze
-    unique_keywords = dataset['keyword'].unique()[:num_keywords]
-    keyword_data = dataset[dataset['keyword'].isin(unique_keywords)]
-    
-    # Data structures to store results
-    decisions = []
-    metrics = []
-    keyword_names = []
-    
-    # Analyze each keyword
-    for keyword in unique_keywords:
-        print(f"Analyzing keyword: {keyword}")
-        keyword_subset = keyword_data[keyword_data['keyword'] == keyword]
-        
-        # Initialize the environment with this keyword
-        env.reset()
-        
-        # For each instance of the keyword, predict the action
-        for _, row in keyword_subset.iterrows():
-            # Create a feature tensor
-            feature_tensor = torch.tensor(
-                row[feature_columns].values, 
-                dtype=torch.float32
-            ).unsqueeze(0)  # Add batch dimension
-            
-            # Create a TensorDict for the observation
-            obs = TensorDict({
-                "keyword_features": feature_tensor.unsqueeze(0),  # [batch, 1, features]
-                "cash": torch.tensor([env.initial_cash], dtype=torch.float32),
-                "holdings": torch.zeros(1, dtype=torch.int)
-            }, batch_size=[])
-            
-            td = TensorDict({
-                "observation": obs,
-                "done": torch.tensor(False, dtype=torch.bool),
-                "step_count": torch.tensor(0, dtype=torch.int64)
-            }, batch_size=[])
-            
-            # Get the policy's decision
-            with torch.no_grad():
-                td_action = policy(td)
-                action = td_action["action"]
-                action_idx = torch.argmax(action).item()
-            
-            # Store the decision and metrics
-            decision = "Invest" if action_idx < env.num_keywords else "Don't Invest"
-            decisions.append(decision)
-            metrics.append({
-                "ROAS": row["ad_roas"],
-                "CTR": row["paid_ctr"],
-                "Ad Spend": row["ad_spend"],
-                "Competitiveness": row["competitiveness"],
-                "Conversion Rate": row["conversion_rate"]
-            })
-            keyword_names.append(keyword)
-    
-    # Create a DataFrame for visualization
-    result_df = pd.DataFrame({
-        "Keyword": keyword_names,
-        "Decision": decisions,
-        "ROAS": [m["ROAS"] for m in metrics],
-        "CTR": [m["CTR"] for m in metrics],
-        "Ad Spend": [m["Ad Spend"] for m in metrics],
-        "Competitiveness": [m["Competitiveness"] for m in metrics],
-        "Conversion Rate": [m["Conversion Rate"] for m in metrics]
-    })
-    
-    # Create visualizations
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle("Keyword Investment Decision Analysis", fontsize=16)
-    
-    # 1. ROAS vs Ad Spend colored by decision
-    ax1 = axes[0, 0]
+    # 1. ROAS vs Ad Spend relationship
+    plt.figure(figsize=(12, 8))
     sns.scatterplot(
-        data=result_df, 
-        x="Ad Spend", 
-        y="ROAS", 
-        hue="Decision", 
-        style="Decision",
-        palette={"Invest": "green", "Don't Invest": "red"},
-        alpha=0.7,
-        s=100,
-        ax=ax1
+        data=dataset, 
+        x="ad_spend", 
+        y="ad_roas",
+        hue="competitiveness",
+        size="conversion_rate",
+        sizes=(20, 200),
+        palette="viridis",
+        alpha=0.7
     )
-    ax1.set_title("ROAS vs Ad Spend")
-    ax1.grid(True, alpha=0.3)
-    
-    # 2. CTR vs Competitiveness colored by decision
-    ax2 = axes[0, 1]
-    sns.scatterplot(
-        data=result_df, 
-        x="Competitiveness", 
-        y="CTR", 
-        hue="Decision", 
-        style="Decision",
-        palette={"Invest": "green", "Don't Invest": "red"},
-        alpha=0.7,
-        s=100,
-        ax=ax2
-    )
-    ax2.set_title("CTR vs Competitiveness")
-    ax2.grid(True, alpha=0.3)
-    
-    # 3. Conversion Rate vs Ad Spend colored by decision
-    ax3 = axes[1, 0]
-    sns.scatterplot(
-        data=result_df, 
-        x="Ad Spend", 
-        y="Conversion Rate", 
-        hue="Decision", 
-        style="Decision",
-        palette={"Invest": "green", "Don't Invest": "red"},
-        alpha=0.7,
-        s=100,
-        ax=ax3
-    )
-    ax3.set_title("Conversion Rate vs Ad Spend")
-    ax3.grid(True, alpha=0.3)
-    
-    # 4. Decision Distribution by Keyword
-    ax4 = axes[1, 1]
-    keyword_decision_counts = result_df.groupby(["Keyword", "Decision"]).size().unstack(fill_value=0)
-    keyword_decision_counts.plot(
-        kind="bar", 
-        stacked=True, 
-        ax=ax4, 
-        color=["red", "green"]
-    )
-    ax4.set_title("Investment Decisions by Keyword")
-    ax4.set_xlabel("Keyword")
-    ax4.set_ylabel("Count")
-    ax4.legend(title="Decision")
-    plt.setp(ax4.get_xticklabels(), rotation=45, ha="right")
-    
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plot_path = f"{output_dir}/keyword_decision_map.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    
-    # Create an additional visualization showing the decision boundaries
-    plt.figure(figsize=(12, 10))
-    plt.suptitle("Decision Boundary Analysis: ROAS vs Ad Spend", fontsize=16)
-    
-    # Create a grid of points covering the space
-    roas_range = np.linspace(result_df["ROAS"].min(), result_df["ROAS"].max(), 100)
-    spend_range = np.linspace(result_df["Ad Spend"].min(), result_df["Ad Spend"].max(), 100)
-    
-    ROAS, SPEND = np.meshgrid(roas_range, spend_range)
-    
-    # Create a contour plot of the decision boundary
-    # We'll use a simplified model based on our observations
-    boundary_x = []
-    boundary_y = []
-    
-    # Plot the actual data points
-    plt.scatter(
-        result_df[result_df["Decision"] == "Invest"]["Ad Spend"],
-        result_df[result_df["Decision"] == "Invest"]["ROAS"],
-        color="green",
-        label="Invest",
-        alpha=0.7,
-        s=100,
-        edgecolors='w'
-    )
-    plt.scatter(
-        result_df[result_df["Decision"] == "Don't Invest"]["Ad Spend"],
-        result_df[result_df["Decision"] == "Don't Invest"]["ROAS"],
-        color="red",
-        label="Don't Invest",
-        alpha=0.7,
-        s=100,
-        edgecolors='w'
-    )
-    
-    # Add decision regions (estimated)
-    # This is a simplification of what the model might be doing
-    # For a more accurate representation, we would need to run the model on the grid points
-    
-    # High ROAS Region (likely "Invest")
-    high_roas_region_x = np.linspace(0, result_df["Ad Spend"].max(), 100)
-    high_roas_region_y = 2.0 * np.ones_like(high_roas_region_x)  # ROAS threshold of 2.0
-    plt.fill_between(
-        high_roas_region_x, 
-        high_roas_region_y, 
-        np.max(result_df["ROAS"]) * np.ones_like(high_roas_region_y),
-        alpha=0.1,
-        color="green",
-        label="Likely Invest Region"
-    )
-    
-    # Mid-range Region (mixed decisions)
-    mid_region_x = np.linspace(0, result_df["Ad Spend"].max(), 100)
-    mid_region_y_upper = 2.0 * np.ones_like(mid_region_x)
-    mid_region_y_lower = 1.0 * np.ones_like(mid_region_x)
-    plt.fill_between(
-        mid_region_x, 
-        mid_region_y_lower, 
-        mid_region_y_upper,
-        alpha=0.1,
-        color="yellow",
-        label="Mixed Decision Region"
-    )
-    
-    # Low ROAS Region (likely "Don't Invest")
-    low_roas_region_x = np.linspace(0, result_df["Ad Spend"].max(), 100)
-    low_roas_region_y = 1.0 * np.ones_like(low_roas_region_x)
-    plt.fill_between(
-        low_roas_region_x, 
-        low_roas_region_y, 
-        np.zeros_like(low_roas_region_y),
-        alpha=0.1,
-        color="red",
-        label="Likely Don't Invest Region"
-    )
-    
+    plt.title("ROAS vs Ad Spend by Keyword Competitiveness")
     plt.xlabel("Ad Spend")
-    plt.ylabel("ROAS (Return on Ad Spend)")
+    plt.ylabel("Return on Ad Spend (ROAS)")
     plt.grid(True, alpha=0.3)
-    plt.legend(loc="upper right")
     
-    boundary_path = f"{output_dir}/decision_boundary.png"
-    plt.savefig(boundary_path, dpi=300, bbox_inches="tight")
+    # Add ROAS = 1 reference line (break-even point)
+    plt.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label="Break-Even (ROAS = 1.0)")
+    plt.legend(title="Competitiveness", bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    roas_plot_path = os.path.join(output_dir, "roas_vs_spend.png")
+    plt.savefig(roas_plot_path, dpi=300, bbox_inches="tight")
     plt.close()
+    saved_plots.append(roas_plot_path)
     
-    return plot_path
-
-def visualize_reward_components(dataset, policy, env, output_dir="reward_analysis"):
-    """
-    Visualize the components that contribute to the reward function and how 
-    they influence the agent's decision-making.
-    
-    Args:
-        dataset (pd.DataFrame): Dataset containing keyword metrics.
-        policy (TensorDictSequential): Trained policy network.
-        env (AdOptimizationEnv): Environment for ad optimization.
-        output_dir (str): Directory to save the visualizations.
-    
-    Returns:
-        str: Path to the saved plot.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Set the model to evaluation mode
-    policy.eval()
-    
-    # Sample a number of states from the dataset
-    sample_size = min(200, len(dataset))
-    sampled_data = dataset.sample(sample_size)
-    
-    # Data structures to store results
-    decisions = []
-    rewards = []
-    metrics = {
-        "ROAS": [],
-        "CTR": [],
-        "Ad Spend": [],
-        "Reward Component": []
-    }
-    
-    # Analyze each sampled state
-    for _, row in sampled_data.iterrows():
-        # Create a feature tensor
-        feature_tensor = torch.tensor(
-            row[feature_columns].values, 
-            dtype=torch.float32
-        ).unsqueeze(0)  # Add batch dimension
-        
-        # Create a TensorDict for the observation
-        obs = TensorDict({
-            "keyword_features": feature_tensor.unsqueeze(0),  # [batch, 1, features]
-            "cash": torch.tensor([env.initial_cash], dtype=torch.float32),
-            "holdings": torch.zeros(1, dtype=torch.int)
-        }, batch_size=[])
-        
-        td = TensorDict({
-            "observation": obs,
-            "done": torch.tensor(False, dtype=torch.bool),
-            "step_count": torch.tensor(0, dtype=torch.int64)
-        }, batch_size=[])
-        
-        # Get the policy's decision
-        with torch.no_grad():
-            td_action = policy(td)
-            action = td_action["action"]
-            action_idx = torch.argmax(action).item()
-        
-        # Store decision
-        decision = "Invest" if action_idx < env.num_keywords else "Don't Invest"
-        decisions.append(decision)
-        
-        # Extract metrics
-        roas = row["ad_roas"]
-        ctr = row["paid_ctr"]
-        ad_spend = row["ad_spend"]
-        
-        # Compute reward components
-        roas_component = 2.0 if roas > 2.0 else (1.0 if roas > 1.0 else 0.0)
-        ctr_component = 0.5 if ctr > 0.15 else 0.0
-        
-        # Store reward components
-        metrics["ROAS"].append(roas)
-        metrics["CTR"].append(ctr)
-        metrics["Ad Spend"].append(ad_spend)
-        
-        # Determine the primary reward component
-        if roas > 2.0:
-            metrics["Reward Component"].append("High ROAS")
-        elif roas > 1.0:
-            metrics["Reward Component"].append("Profitable")
-        elif ctr > 0.15:
-            metrics["Reward Component"].append("High CTR")
-        else:
-            metrics["Reward Component"].append("Low Performance")
-    
-    # Create a DataFrame for visualization
-    result_df = pd.DataFrame({
-        "Decision": decisions,
-        "ROAS": metrics["ROAS"],
-        "CTR": metrics["CTR"],
-        "Ad Spend": metrics["Ad Spend"],
-        "Reward Component": metrics["Reward Component"]
-    })
-    
-    # Create visualizations
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle("Reward Component Analysis", fontsize=16)
-    
-    # 1. ROAS Distribution by Decision
-    ax1 = axes[0, 0]
-    sns.violinplot(
-        data=result_df, 
-        x="Decision", 
-        y="ROAS", 
-        hue="Decision",
-        palette={"Invest": "green", "Don't Invest": "red"},
-        split=True,
-        inner="quart",
-        ax=ax1
+    # 2. CTR vs Competitiveness
+    plt.figure(figsize=(12, 8))
+    sns.jointplot(
+        data=dataset,
+        x="competitiveness",
+        y="paid_ctr",
+        hue="organic_rank",
+        kind="scatter",
+        height=8,
+        ratio=5,
+        palette="coolwarm"
     )
-    ax1.set_title("ROAS Distribution by Decision")
-    ax1.grid(True, alpha=0.3)
+    plt.suptitle("Click-Through Rate vs Keyword Competitiveness", y=1.02)
     
-    # 2. CTR Distribution by Decision
-    ax2 = axes[0, 1]
-    sns.violinplot(
-        data=result_df, 
-        x="Decision", 
-        y="CTR", 
-        hue="Decision",
-        palette={"Invest": "green", "Don't Invest": "red"},
-        split=True,
-        inner="quart",
-        ax=ax2
-    )
-    ax2.set_title("CTR Distribution by Decision")
-    ax2.grid(True, alpha=0.3)
+    ctr_plot_path = os.path.join(output_dir, "ctr_vs_competitiveness.png")
+    plt.savefig(ctr_plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(ctr_plot_path)
     
-    # 3. Decision Distribution by Reward Component
-    ax3 = axes[1, 0]
-    component_counts = result_df.groupby(["Reward Component", "Decision"]).size().unstack(fill_value=0)
-    component_counts.plot(
-        kind="bar", 
-        stacked=True, 
-        ax=ax3, 
-        color=["red", "green"]
+    # 3. Feature correlations heatmap
+    plt.figure(figsize=(14, 12))
+    corr = dataset[feature_columns].corr()
+    mask = np.triu(np.ones_like(corr, dtype=bool))
+    sns.heatmap(
+        corr, 
+        mask=mask,
+        cmap="RdBu_r",
+        vmax=1.0, 
+        vmin=-1.0,
+        center=0,
+        square=True, 
+        linewidths=.5,
+        annot=True,
+        fmt=".2f",
+        cbar_kws={"shrink": .8}
     )
-    ax3.set_title("Decisions by Reward Component")
-    ax3.set_xlabel("Reward Component")
-    ax3.set_ylabel("Count")
-    ax3.legend(title="Decision")
-    plt.setp(ax3.get_xticklabels(), rotation=45, ha="right")
+    plt.title("Feature Correlation Matrix")
     
-    # 4. Ad Spend vs ROAS colored by Reward Component
-    ax4 = axes[1, 1]
-    sns.scatterplot(
-        data=result_df, 
-        x="Ad Spend", 
-        y="ROAS", 
-        hue="Reward Component",
-        style="Decision",
-        palette={"High ROAS": "darkgreen", "Profitable": "limegreen", 
-                "High CTR": "orange", "Low Performance": "crimson"},
-        alpha=0.7,
-        s=100,
-        ax=ax4
-    )
-    ax4.set_title("Ad Spend vs ROAS by Reward Component")
-    ax4.grid(True, alpha=0.3)
+    corr_plot_path = os.path.join(output_dir, "feature_correlations.png")
+    plt.savefig(corr_plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(corr_plot_path)
+    
+    # 4. Key performance indicators distribution
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle("Distribution of Key Performance Indicators", fontsize=16)
+    
+    # ROAS Distribution
+    sns.histplot(dataset["ad_roas"], kde=True, ax=axes[0, 0], color="green", bins=30)
+    axes[0, 0].axvline(x=1.0, color='r', linestyle='--', label="Break-even (ROAS=1)")
+    axes[0, 0].set_title("ROAS Distribution")
+    axes[0, 0].set_xlabel("Return on Ad Spend")
+    axes[0, 0].legend()
+    
+    # CTR Distribution
+    sns.histplot(dataset["paid_ctr"], kde=True, ax=axes[0, 1], color="blue", bins=30)
+    axes[0, 1].set_title("Paid CTR Distribution")
+    axes[0, 1].set_xlabel("Click-Through Rate")
+    
+    # Ad Spend Distribution
+    sns.histplot(dataset["ad_spend"], kde=True, ax=axes[1, 0], color="purple", bins=30)
+    axes[1, 0].set_title("Ad Spend Distribution")
+    axes[1, 0].set_xlabel("Ad Spend")
+    
+    # Conversion Rate Distribution
+    sns.histplot(dataset["conversion_rate"], kde=True, ax=axes[1, 1], color="orange", bins=30)
+    axes[1, 1].set_title("Conversion Rate Distribution")
+    axes[1, 1].set_xlabel("Conversion Rate")
     
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plot_path = f"{output_dir}/reward_component_analysis.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    kpi_plot_path = os.path.join(output_dir, "kpi_distributions.png")
+    plt.savefig(kpi_plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(kpi_plot_path)
     
-    return plot_path
+    return saved_plots
+
+
+def visualize_investment_decision_strategies(dataset, output_dir):
+    """
+    Create visualizations that illustrate potential investment decision strategies.
+    This doesn't require the trained model but provides insight into the decision space.
+    
+    Args:
+        dataset (pd.DataFrame): Dataset containing keyword metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
+    
+    # Create a synthetic decision column based on ROAS and CTR thresholds
+    # This simulates what an agent might learn
+    dataset = dataset.copy()
+    dataset['decision'] = 'Don\'t Invest'
+    
+    # High ROAS strategy
+    high_roas_mask = (dataset['ad_roas'] > 2.0)
+    dataset.loc[high_roas_mask, 'decision'] = 'Invest (High ROAS)'
+    
+    # Balanced strategy for medium ROAS with good CTR
+    balanced_mask = ((dataset['ad_roas'] > 1.2) & (dataset['ad_roas'] <= 2.0) & 
+                     (dataset['paid_ctr'] > 0.15))
+    dataset.loc[balanced_mask, 'decision'] = 'Invest (Balanced)'
+    
+    # Aggressive strategy for high CTR even with marginal ROAS
+    aggressive_mask = ((dataset['ad_roas'] > 1.0) & (dataset['ad_roas'] <= 1.2) & 
+                       (dataset['paid_ctr'] > 0.18))
+    dataset.loc[aggressive_mask, 'decision'] = 'Invest (Aggressive)'
+    
+    # 1. Decision Map: ROAS vs Ad Spend
+    plt.figure(figsize=(14, 10))
+    sns.scatterplot(
+        data=dataset, 
+        x="ad_spend", 
+        y="ad_roas",
+        hue="decision",
+        style="decision",
+        palette={
+            "Invest (High ROAS)": "darkgreen", 
+            "Invest (Balanced)": "limegreen", 
+            "Invest (Aggressive)": "orange", 
+            "Don't Invest": "red"
+        },
+        alpha=0.7,
+        s=100
+    )
+    plt.title("Investment Decision Strategy Map: ROAS vs Ad Spend")
+    plt.xlabel("Ad Spend")
+    plt.ylabel("Return on Ad Spend (ROAS)")
+    plt.axhline(y=1.0, color='gray', linestyle='--', alpha=0.7, label="Break-Even (ROAS = 1.0)")
+    plt.axhline(y=1.2, color='gray', linestyle=':', alpha=0.7)
+    plt.axhline(y=2.0, color='gray', linestyle='-.', alpha=0.7)
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="Decision Strategy", loc="upper right")
+    
+    decision_map_path = os.path.join(output_dir, "decision_strategy_map.png")
+    plt.savefig(decision_map_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(decision_map_path)
+    
+    # 2. Decision Map: ROAS vs CTR
+    plt.figure(figsize=(14, 10))
+    sns.scatterplot(
+        data=dataset, 
+        x="paid_ctr", 
+        y="ad_roas",
+        hue="decision",
+        style="decision",
+        palette={
+            "Invest (High ROAS)": "darkgreen", 
+            "Invest (Balanced)": "limegreen", 
+            "Invest (Aggressive)": "orange", 
+            "Don't Invest": "red"
+        },
+        alpha=0.7,
+        s=100
+    )
+    plt.title("Investment Decision Strategy Map: ROAS vs CTR")
+    plt.xlabel("Click-Through Rate (CTR)")
+    plt.ylabel("Return on Ad Spend (ROAS)")
+    plt.axhline(y=1.0, color='gray', linestyle='--', alpha=0.7, label="Break-Even (ROAS = 1.0)")
+    plt.axhline(y=1.2, color='gray', linestyle=':', alpha=0.7)
+    plt.axhline(y=2.0, color='gray', linestyle='-.', alpha=0.7)
+    plt.axvline(x=0.15, color='gray', linestyle=':', alpha=0.7)
+    plt.axvline(x=0.18, color='gray', linestyle='-.', alpha=0.7)
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="Decision Strategy", loc="upper right")
+    
+    decision_ctr_path = os.path.join(output_dir, "decision_strategy_ctr.png")
+    plt.savefig(decision_ctr_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(decision_ctr_path)
+    
+    # 3. Strategy Distribution Analysis
+    strategy_counts = dataset['decision'].value_counts()
+    
+    plt.figure(figsize=(12, 8))
+    ax = strategy_counts.plot(kind='bar', color=['darkgreen', 'limegreen', 'orange', 'red'])
+    plt.title("Distribution of Investment Decisions by Strategy")
+    plt.xlabel("Investment Strategy")
+    plt.ylabel("Number of Keywords")
+    plt.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels on top of each bar
+    for i, count in enumerate(strategy_counts):
+        ax.text(i, count + 5, str(count), ha='center')
+    
+    strategy_dist_path = os.path.join(output_dir, "strategy_distribution.png")
+    plt.savefig(strategy_dist_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(strategy_dist_path)
+    
+    # 4. Expected Return Analysis by Strategy
+    # Calculate potential returns for each keyword based on decision
+    dataset['investment'] = dataset['ad_spend'] * (
+        dataset['decision'].isin(['Invest (High ROAS)', 'Invest (Balanced)', 'Invest (Aggressive)'])
+    ).astype(int)
+    
+    dataset['expected_return'] = dataset['investment'] * dataset['ad_roas']
+    dataset['profit'] = dataset['expected_return'] - dataset['investment']
+    
+    # Aggregate by strategy
+    strategy_performance = dataset.groupby('decision').agg({
+        'investment': 'sum',
+        'expected_return': 'sum',
+        'profit': 'sum',
+        'ad_roas': 'mean'
+    }).reset_index()
+    
+    strategy_performance['roi'] = strategy_performance['profit'] / strategy_performance['investment']
+    strategy_performance.loc[strategy_performance['investment'] == 0, 'roi'] = 0
+    
+    # Plot ROI by strategy
+    plt.figure(figsize=(12, 8))
+    bars = plt.bar(
+        strategy_performance['decision'],
+        strategy_performance['roi'],
+        color=['darkgreen', 'limegreen', 'orange', 'gray']
+    )
+    plt.title("Return on Investment by Strategy")
+    plt.xlabel("Investment Strategy")
+    plt.ylabel("ROI")
+    plt.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels on top of each bar
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width()/2., 
+            height + 0.01, 
+            f'{height:.2f}', 
+            ha='center', va='bottom'
+        )
+    
+    roi_path = os.path.join(output_dir, "roi_by_strategy.png")
+    plt.savefig(roi_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    saved_plots.append(roi_path)
+    
+    return saved_plots
+
+
+def create_html_report(plots, output_dir, params=None):
+    """
+    Create an HTML report with all visualizations.
+    
+    Args:
+        plots (dict): Dictionary with section names and plots
+        output_dir (str): Output directory
+        params (dict): Optional parameters extracted from logs
+        
+    Returns:
+        str: Path to HTML report
+    """
+    report_path = os.path.join(output_dir, "ad_performance_report.html")
+    
+    # HTML template
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Digital Advertising Performance Analysis</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                color: #333;
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+            h1 {
+                color: #2c3e50;
+                border-bottom: 2px solid #3498db;
+                padding-bottom: 10px;
+            }
+            h2 {
+                color: #2980b9;
+                margin-top: 30px;
+            }
+            .section {
+                margin-bottom: 40px;
+                background-color: #f9f9f9;
+                padding: 20px;
+                border-radius: 5px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            }
+            .plot {
+                text-align: center;
+                margin: 20px 0;
+            }
+            .plot img {
+                max-width: 100%;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 5px;
+                background-color: white;
+            }
+            .caption {
+                font-style: italic;
+                color: #666;
+                margin-top: 10px;
+            }
+            .params {
+                background-color: #eee;
+                padding: 15px;
+                border-radius: 4px;
+                font-family: monospace;
+                white-space: pre-wrap;
+            }
+            .timestamp {
+                color: #777;
+                font-size: 0.9em;
+                text-align: right;
+                margin-top: 30px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Digital Advertising Performance Analysis</h1>
+    """
+    
+    # Add timestamp
+    html += f"""
+        <div class="timestamp">Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+    """
+    
+    # Add parameters section if available
+    if params:
+        html += """
+        <div class="section">
+            <h2>Training Parameters</h2>
+            <div class="params">
+        """
+        
+        for key, value in params.items():
+            html += f"{key}: {value}\n"
+        
+        html += """
+            </div>
+        </div>
+        """
+    
+    # Add each section with its plots
+    for section_name, section_plots in plots.items():
+        html += f"""
+        <div class="section">
+            <h2>{section_name}</h2>
+        """
+        
+        for plot_path in section_plots:
+            plot_filename = os.path.basename(plot_path)
+            plot_rel_path = os.path.relpath(plot_path, output_dir)
+            
+            # Create caption from filename
+            caption = plot_filename.replace('.png', '').replace('_', ' ').title()
+            
+            html += f"""
+            <div class="plot">
+                <img src="{plot_rel_path}" alt="{caption}">
+                <div class="caption">{caption}</div>
+            </div>
+            """
+        
+        html += """
+        </div>
+        """
+    
+    # Close HTML document
+    html += """
+    </body>
+    </html>
+    """
+    
+    # Write HTML to file
+    with open(report_path, 'w') as f:
+        f.write(html)
+    
+    print(f"HTML report generated at {report_path}")
+    return report_path
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize Ad Performance with Trained RL Model")
-    parser.add_argument("--model", type=str, default="ad_optimization_model.pt", help="Path to saved model")
+    parser = argparse.ArgumentParser(description="Visualize Ad Performance from TensorBoard Logs")
+    parser.add_argument("--logdir", type=str, default="runs", help="TensorBoard log directory")
     parser.add_argument("--dataset", type=str, default=None, help="Path to dataset CSV (if None, generates synthetic data)")
     parser.add_argument("--output_dir", type=str, default="visualization_results", help="Output directory for visualizations")
+    parser.add_argument("--model", type=str, default=None, help="Optional path to saved model for additional analysis")
+    parser.add_argument("--num_samples", type=int, default=1000, help="Number of samples for synthetic data generation")
     args = parser.parse_args()
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
     # Set random seed for reproducibility
-    set_all_seeds(42)
+    np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
+    torch.manual_seed(42)
+    
+    # Parse TensorBoard logs
+    metric_dfs = parse_tensorboard_logs(args.logdir)
+    
+    # Extract parameters from logs if available
+    extracted_params = {}
+    if metric_dfs:
+        for tag in metric_dfs:
+            if 'text' in tag.lower():
+                for _, row in metric_dfs[tag].iterrows():
+                    # Attempt to extract parameter from text
+                    # This is approximate as text format can vary
+                    text_value = str(row['value'])
+                    param_match = re.search(r'([a-zA-Z_]+):\s*([\d\.]+)', text_value)
+                    if param_match:
+                        param_name, param_value = param_match.groups()
+                        extracted_params[param_name] = param_value
     
     # Load or generate dataset
     if args.dataset and os.path.exists(args.dataset):
         print(f"Loading dataset from {args.dataset}")
         dataset = pd.read_csv(args.dataset)
     else:
-        print("Generating synthetic dataset")
-        dataset = generate_synthetic_data(1000)
-        dataset_path = f"{args.output_dir}/synthetic_ad_data.csv"
+        print(f"Generating synthetic dataset with {args.num_samples} samples")
+        dataset = generate_synthetic_data(args.num_samples)
+        dataset_path = os.path.join(args.output_dir, "synthetic_ad_data.csv")
         dataset.to_csv(dataset_path, index=False)
         print(f"Synthetic dataset saved to {dataset_path}")
     
-    # Create environment
-    env = AdOptimizationEnv(dataset)
-    
-    # Load model
-    print(f"Loading model from {args.model}")
-    policy = load_model(args.model, env)
-    
     # Generate visualizations
-    print("Generating keyword decision map...")
-    keyword_map_path = visualize_keyword_decision_map(dataset, policy, env, 
-                                                    output_dir=f"{args.output_dir}/keyword_analysis")
-    print(f"Keyword decision map saved to {keyword_map_path}")
+    all_plots = {}
     
-    print("Generating reward component analysis...")
-    reward_analysis_path = visualize_reward_components(dataset, policy, env, 
-                                                     output_dir=f"{args.output_dir}/reward_analysis")
-    print(f"Reward component analysis saved to {reward_analysis_path}")
+    # 1. Training metrics from TensorBoard
+    if metric_dfs:
+        all_plots["Training Progress"] = visualize_training_metrics(
+            metric_dfs, 
+            os.path.join(args.output_dir, "training_metrics")
+        )
     
+    # 2. Keyword performance metrics
+    all_plots["Keyword Performance Analysis"] = visualize_keyword_performance(
+        dataset,
+        os.path.join(args.output_dir, "keyword_performance")
+    )
+    
+    # 3. Investment decision strategies
+    all_plots["Investment Decision Strategies"] = visualize_investment_decision_strategies(
+        dataset,
+        os.path.join(args.output_dir, "decision_strategies")
+    )
+    
+    # Create HTML report with all visualizations
+    html_report_path = create_html_report(all_plots, args.output_dir, extracted_params)
+    
+    print(f"\nVisualization complete!")
+    print(f"HTML report available at: {html_report_path}")
     print(f"All visualizations saved to {args.output_dir}")
+
 
 if __name__ == "__main__":
     main()
