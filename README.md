@@ -51,3 +51,10 @@ Open webbrowser at <http://localhost:6006/> (or check the output of the tensorbo
 ## Analyze our raw data
 
 Just run analyze_raw_data.py, the browser will open at <http://127.0.0.1:8050/>
+
+Make some plots
+````shell
+# - Make sure you are in the folder you ran stuff from
+python visualize_ad_performance.py --logdir runs --output_dir visualization_results
+````
+
