@@ -941,8 +941,21 @@ print(device)
 feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
 
 if __name__ == "__main__":
+    # Check if the dataset file exists before running learn()
+    if not os.path.exists(file_path):
+        print(f"Dataset file {file_path} not found. Creating directory and generating synthetic data...")
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Generate synthetic data
+        synthetic_data = generate_synthetic_data(1000)
+        
+        # Save the generated data to CSV
+        synthetic_data.to_csv(file_path, index=False)
+        print(f"Synthetic data generated and saved to {file_path}")
+    
+    # Now run the learning process
     learn()
-
 
 ''''
 Todo:
