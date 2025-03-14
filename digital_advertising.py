@@ -774,9 +774,27 @@ def learn(params=None, train_data=None, test_data=None):
     rb = ReplayBuffer(storage=LazyTensorStorage(replay_buffer_size))
 
     loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-    lr=0.001
-    weight_decay=1e-5
-    eps=0.99
+#    lr=0.001
+#    weight_decay=1e-5
+#    eps=0.99
+    if params is None:
+        params = {
+            'lr': 0.001,
+            'batch_size': 128,
+            'gamma': 0.99,
+            'weight_decay': 1e-5,
+            'eps_init': 0.99,
+            'eps_end': 0.01
+        }
+
+    # Extract hyperparameters
+    lr = params.get('lr', 0.001)
+    batch_size = params.get('batch_size', 128)
+    gamma = params.get('gamma', 0.99)
+    weight_decay = params.get('weight_decay', 1e-5)
+    eps = params.get('eps_init', 0.99)
+    eps_end = params.get('eps_end', 0.01)
+
     optim = Adam(loss.parameters(), lr=lr, weight_decay=weight_decay)  # Add weight decay for regularization
     updater = SoftUpdate(loss, eps=eps)
 
