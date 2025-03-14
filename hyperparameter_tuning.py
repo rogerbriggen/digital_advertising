@@ -32,8 +32,7 @@ def objective(trial, dataset):
         'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),
         'batch_size': trial.suggest_categorical('batch_size', [32, 64, 128, 256]),
         'gamma': trial.suggest_float('gamma', 0.9, 0.999),
-        'eps_init': trial.suggest_float('eps_init', 0.5, 1.0),
-        'eps_end': trial.suggest_float('eps_end', 0.01, 0.1)
+        'eps_init': trial.suggest_float('eps_init', 0.5, 1.0)
     }
     
     # Split dataset
