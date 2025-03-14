@@ -54,7 +54,10 @@ Just run analyze_raw_data.py, the browser will open at <http://127.0.0.1:8050/>
 
 Make some plots
 ````shell
-# - Make sure you are in the folder you ran stuff from
+# Make sure you are in the folder you ran stuff from
 python visualize_ad_performance.py --logdir runs --output_dir visualization_results
+
+# HTML report on training
+python tensorboard-analyzer.py --logdir runs --output_dir training_analysis
 ````
 
