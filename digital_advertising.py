@@ -18,7 +18,8 @@ from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
 from torchrl.envs import EnvBase
 from torchrl.modules import EGreedyModule, MLP, QValueModule
 from torchrl.objectives import DQNLoss, SoftUpdate
-
+# Define the file path
+file_path = 'data/organized_dataset.csv'
 
 # Generate Realistic Synthetic Data. This is coming from Ilja's code
 # Platzierung:
@@ -714,11 +715,31 @@ def run_inference(model_path, dataset_test, device, feature_columns):
     print(f"Total inference reward: {total_reward}")
     return total_reward, inference_policy
 
-def learn():
+#def learn():
     # Load the organized dataset
-    dataset = pd.read_csv('data/organized_dataset.csv')
+    # dataset = pd.read_csv('data/organized_dataset.csv')
     # Split it into training and test data
+    # dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+def learn(params=None, train_data=None, test_data=None):
+    # Load the organized dataset
+    # Check if the file exists
+    if os.path.exists(file_path):
+        # If file exists, load it directly
+        dataset = pd.read_csv(file_path)
+        print(f"Dataset loaded from {file_path}")
+    else:
+        # If file doesn't exist, generate synthetic data
+        print(f"File {file_path} not found. Generating synthetic data...")       
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        dataset = generate_synthetic_data(1000)
+        dataset = pd.read_csv(file_path)
+        print(f"Dataset loaded from newly created {file_path}")
+    #    # Split it into training and test data
+    #    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+    # dataset = generate_synthetic_data(1000)
     dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+    train_data, test_data = dataset_training, dataset_test
 
     # Initialize Environment
     env = AdOptimizationEnv(dataset_training, device=device)
