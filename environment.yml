@@ -1,4 +1,4 @@
-name: torchRL
+name: torchrl_ads
 channels:
   - defaults
   - https://repo.anaconda.com/pkgs/main
