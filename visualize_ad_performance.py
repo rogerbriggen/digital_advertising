@@ -273,18 +273,21 @@ def visualize_keyword_performance(dataset, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     saved_plots = []
     
+    # Avoid using any seaborn functions that might use problematic pandas options
+    # Instead use only matplotlib directly
+    
     # 1. ROAS vs Ad Spend relationship
     plt.figure(figsize=(12, 8))
-    sns.scatterplot(
-        data=dataset, 
-        x="ad_spend", 
-        y="ad_roas",
-        hue="competitiveness",
-        size="conversion_rate",
-        sizes=(20, 200),
-        palette="viridis",
-        alpha=0.7
+    # Use matplotlib's scatter instead of seaborn
+    plt.scatter(
+        dataset["ad_spend"], 
+        dataset["ad_roas"],
+        c=dataset["competitiveness"],
+        cmap="viridis",
+        alpha=0.7,
+        s=100
     )
+    plt.colorbar(label="Competitiveness")
     plt.title("ROAS vs Ad Spend by Keyword Competitiveness")
     plt.xlabel("Ad Spend")
     plt.ylabel("Return on Ad Spend (ROAS)")
@@ -292,16 +295,16 @@ def visualize_keyword_performance(dataset, output_dir):
     
     # Add ROAS = 1 reference line (break-even point)
     plt.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label="Break-Even (ROAS = 1.0)")
-    plt.legend(title="Competitiveness", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.legend()
     
     roas_plot_path = os.path.join(output_dir, "roas_vs_spend.png")
     plt.savefig(roas_plot_path, dpi=300, bbox_inches="tight")
     plt.close()
     saved_plots.append(roas_plot_path)
     
-    # 2. CTR vs Competitiveness - Using standard scatter plot instead of jointplot
+    # 2. CTR vs Competitiveness - Using standard scatter plot
     plt.figure(figsize=(12, 8))
-    scatter = plt.scatter(
+    plt.scatter(
         dataset["competitiveness"],
         dataset["paid_ctr"],
         c=dataset["organic_rank"],
@@ -309,7 +312,7 @@ def visualize_keyword_performance(dataset, output_dir):
         alpha=0.7,
         s=100
     )
-    plt.colorbar(scatter, label="Organic Rank")
+    plt.colorbar(label="Organic Rank")
     plt.title("Click-Through Rate vs Keyword Competitiveness")
     plt.xlabel("Competitiveness")
     plt.ylabel("Paid CTR")
@@ -320,23 +323,26 @@ def visualize_keyword_performance(dataset, output_dir):
     plt.close()
     saved_plots.append(ctr_plot_path)
     
-    # 3. Feature correlations heatmap
+    # 3. Feature correlations heatmap - use matplotlib instead of seaborn
     plt.figure(figsize=(14, 12))
-    corr = dataset[feature_columns].corr()
-    mask = np.triu(np.ones_like(corr, dtype=bool))
-    sns.heatmap(
-        corr, 
-        mask=mask,
-        cmap="RdBu_r",
-        vmax=1.0, 
-        vmin=-1.0,
-        center=0,
-        square=True, 
-        linewidths=.5,
-        annot=True,
-        fmt=".2f",
-        cbar_kws={"shrink": .8}
-    )
+    # Calculate correlation matrix manually
+    corr = dataset[feature_columns].corr().values
+    
+    # Create heatmap manually
+    plt.imshow(corr, cmap='RdBu_r', vmin=-1, vmax=1)
+    plt.colorbar(label="Correlation Coefficient")
+    
+    # Add feature names as ticks
+    plt.xticks(range(len(feature_columns)), feature_columns, rotation=90)
+    plt.yticks(range(len(feature_columns)), feature_columns)
+    
+    # Add correlation values as text
+    for i in range(len(feature_columns)):
+        for j in range(len(feature_columns)):
+            plt.text(j, i, f"{corr[i, j]:.2f}", 
+                     ha="center", va="center", 
+                     color="black" if abs(corr[i, j]) < 0.7 else "white")
+    
     plt.title("Feature Correlation Matrix")
     
     corr_plot_path = os.path.join(output_dir, "feature_correlations.png")
@@ -344,29 +350,29 @@ def visualize_keyword_performance(dataset, output_dir):
     plt.close()
     saved_plots.append(corr_plot_path)
     
-    # 4. Key performance indicators distribution
+    # 4. Key performance indicators distribution using simple histograms
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     fig.suptitle("Distribution of Key Performance Indicators", fontsize=16)
     
-    # ROAS Distribution
-    sns.histplot(dataset["ad_roas"], kde=True, ax=axes[0, 0], color="green", bins=30)
+    # ROAS Distribution - simple histogram
+    axes[0, 0].hist(dataset["ad_roas"], bins=30, color="green", alpha=0.7)
     axes[0, 0].axvline(x=1.0, color='r', linestyle='--', label="Break-even (ROAS=1)")
     axes[0, 0].set_title("ROAS Distribution")
     axes[0, 0].set_xlabel("Return on Ad Spend")
     axes[0, 0].legend()
     
     # CTR Distribution
-    sns.histplot(dataset["paid_ctr"], kde=True, ax=axes[0, 1], color="blue", bins=30)
+    axes[0, 1].hist(dataset["paid_ctr"], bins=30, color="blue", alpha=0.7)
     axes[0, 1].set_title("Paid CTR Distribution")
     axes[0, 1].set_xlabel("Click-Through Rate")
     
     # Ad Spend Distribution
-    sns.histplot(dataset["ad_spend"], kde=True, ax=axes[1, 0], color="purple", bins=30)
+    axes[1, 0].hist(dataset["ad_spend"], bins=30, color="purple", alpha=0.7)
     axes[1, 0].set_title("Ad Spend Distribution")
     axes[1, 0].set_xlabel("Ad Spend")
     
     # Conversion Rate Distribution
-    sns.histplot(dataset["conversion_rate"], kde=True, ax=axes[1, 1], color="orange", bins=30)
+    axes[1, 1].hist(dataset["conversion_rate"], bins=30, color="orange", alpha=0.7)
     axes[1, 1].set_title("Conversion Rate Distribution")
     axes[1, 1].set_xlabel("Conversion Rate")
     
@@ -413,23 +419,33 @@ def visualize_investment_decision_strategies(dataset, output_dir):
                        (dataset['paid_ctr'] > 0.18))
     dataset.loc[aggressive_mask, 'decision'] = 'Invest (Aggressive)'
     
+    # Create color map for decisions
+    decision_colors = {
+        "Invest (High ROAS)": "darkgreen", 
+        "Invest (Balanced)": "limegreen", 
+        "Invest (Aggressive)": "orange", 
+        "Don't Invest": "red"
+    }
+    
+    # Map decisions to colors for plotting
+    point_colors = [decision_colors[decision] for decision in dataset['decision']]
+    
     # 1. Decision Map: ROAS vs Ad Spend
     plt.figure(figsize=(14, 10))
-    sns.scatterplot(
-        data=dataset, 
-        x="ad_spend", 
-        y="ad_roas",
-        hue="decision",
-        style="decision",
-        palette={
-            "Invest (High ROAS)": "darkgreen", 
-            "Invest (Balanced)": "limegreen", 
-            "Invest (Aggressive)": "orange", 
-            "Don't Invest": "red"
-        },
-        alpha=0.7,
-        s=100
-    )
+    
+    # Plot each decision category separately to create legend properly
+    for decision, color in decision_colors.items():
+        mask = dataset['decision'] == decision
+        if mask.any():  # Only plot if at least one point exists
+            plt.scatter(
+                dataset.loc[mask, 'ad_spend'],
+                dataset.loc[mask, 'ad_roas'],
+                color=color,
+                alpha=0.7,
+                s=100,
+                label=decision
+            )
+    
     plt.title("Investment Decision Strategy Map: ROAS vs Ad Spend")
     plt.xlabel("Ad Spend")
     plt.ylabel("Return on Ad Spend (ROAS)")
@@ -446,21 +462,20 @@ def visualize_investment_decision_strategies(dataset, output_dir):
     
     # 2. Decision Map: ROAS vs CTR
     plt.figure(figsize=(14, 10))
-    sns.scatterplot(
-        data=dataset, 
-        x="paid_ctr", 
-        y="ad_roas",
-        hue="decision",
-        style="decision",
-        palette={
-            "Invest (High ROAS)": "darkgreen", 
-            "Invest (Balanced)": "limegreen", 
-            "Invest (Aggressive)": "orange", 
-            "Don't Invest": "red"
-        },
-        alpha=0.7,
-        s=100
-    )
+    
+    # Plot each decision category separately
+    for decision, color in decision_colors.items():
+        mask = dataset['decision'] == decision
+        if mask.any():  # Only plot if at least one point exists
+            plt.scatter(
+                dataset.loc[mask, 'paid_ctr'],
+                dataset.loc[mask, 'ad_roas'],
+                color=color,
+                alpha=0.7,
+                s=100,
+                label=decision
+            )
+    
     plt.title("Investment Decision Strategy Map: ROAS vs CTR")
     plt.xlabel("Click-Through Rate (CTR)")
     plt.ylabel("Return on Ad Spend (ROAS)")
@@ -481,15 +496,21 @@ def visualize_investment_decision_strategies(dataset, output_dir):
     strategy_counts = dataset['decision'].value_counts()
     
     plt.figure(figsize=(12, 8))
-    ax = strategy_counts.plot(kind='bar', color=['darkgreen', 'limegreen', 'orange', 'red'])
+    # Use matplotlib's bar instead of pandas plot
+    plt.bar(
+        strategy_counts.index,
+        strategy_counts.values,
+        color=[decision_colors[d] for d in strategy_counts.index]
+    )
     plt.title("Distribution of Investment Decisions by Strategy")
     plt.xlabel("Investment Strategy")
     plt.ylabel("Number of Keywords")
     plt.grid(True, alpha=0.3, axis='y')
+    plt.xticks(rotation=45, ha='right')
     
     # Add value labels on top of each bar
     for i, count in enumerate(strategy_counts):
-        ax.text(i, count + 5, str(count), ha='center')
+        plt.text(i, count + 5, str(count), ha='center')
     
     strategy_dist_path = os.path.join(output_dir, "strategy_distribution.png")
     plt.savefig(strategy_dist_path, dpi=300, bbox_inches="tight")
@@ -505,28 +526,37 @@ def visualize_investment_decision_strategies(dataset, output_dir):
     dataset['expected_return'] = dataset['investment'] * dataset['ad_roas']
     dataset['profit'] = dataset['expected_return'] - dataset['investment']
     
-    # Aggregate by strategy
-    strategy_performance = dataset.groupby('decision').agg({
-        'investment': 'sum',
-        'expected_return': 'sum',
-        'profit': 'sum',
-        'ad_roas': 'mean'
-    }).reset_index()
+    # Aggregate by strategy - use manual aggregation instead of pandas groupby
+    strategies = dataset['decision'].unique()
+    roi_data = []
     
-    strategy_performance['roi'] = strategy_performance['profit'] / strategy_performance['investment']
-    strategy_performance.loc[strategy_performance['investment'] == 0, 'roi'] = 0
+    for strategy in strategies:
+        strategy_subset = dataset[dataset['decision'] == strategy]
+        investment_sum = strategy_subset['investment'].sum()
+        profit_sum = strategy_subset['profit'].sum()
+        
+        roi = 0
+        if investment_sum > 0:
+            roi = profit_sum / investment_sum
+            
+        roi_data.append({
+            'strategy': strategy,
+            'roi': roi,
+            'color': decision_colors.get(strategy, 'gray')
+        })
     
-    # Plot ROI by strategy
+    # Plot ROI by strategy using matplotlib
     plt.figure(figsize=(12, 8))
-    bars = plt.bar(
-        strategy_performance['decision'],
-        strategy_performance['roi'],
-        color=['darkgreen', 'limegreen', 'orange', 'gray']
-    )
+    strategies = [item['strategy'] for item in roi_data]
+    roi_values = [item['roi'] for item in roi_data]
+    colors = [item['color'] for item in roi_data]
+    
+    bars = plt.bar(strategies, roi_values, color=colors)
     plt.title("Return on Investment by Strategy")
     plt.xlabel("Investment Strategy")
     plt.ylabel("ROI")
     plt.grid(True, alpha=0.3, axis='y')
+    plt.xticks(rotation=45, ha='right')
     
     # Add value labels on top of each bar
     for bar in bars:
