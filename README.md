@@ -16,6 +16,11 @@ The project consists of five main components:
 
 - [Analyzing Marketing Performance: Paid Search Campaign](https://medium.com/@farizalfitraaa/analyzing-marketing-performance-paid-search-campaign-6a9ed5f71c7f) ([Dataset](https://www.kaggle.com/datasets/marceaxl82/shopping-mall-paid-search-campaign-dataset))
 - [PPC Campaign Performance Data](https://www.kaggle.com/datasets/aashwinkumar/ppc-campaign-performance-data)
+- [Google Keywords in Suchkampagnen](https://support.google.com/google-ads/answer/1704371?sjid=14046629692422232983-EU)
+- [Google Ads Auktionen](https://support.google.com/google-ads/answer/142918?sjid=14046629692422232983-EU)
+- [Goolge Ads KI-gestützte Werbelösung](https://ads.google.com/intl/de_CH/home/campaigns/ai-powered-ad-solutions/)
+- [ScaleInsights - Keyword Tracking](https://docs.scaleinsights.com/docs/tracking-keyword-ranking)
+- [Google Trends - Keyword Infos](https://trends.google.com/trends/)
 
 ## Environment
 
