@@ -678,7 +678,7 @@ def run_inference(model_path, dataset_test, device, feature_columns):
         total_reward += reward
         done = test_td["done"].item()
         
-        print(f"Step (run_inference): {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
+        print(f"Step (run_inference ): {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
     
     print(f"Total inference reward: {total_reward}")
     return total_reward, inference_policy
