@@ -29,133 +29,40 @@ file_path = 'data/organized_dataset.csv'
 # Kosten:
 #    - Organisch: Es fallen in der Regel keine (direkten) Kosten pro Klick oder Impression an.
 #    - Paid: Werbetreibende zahlen oft pro Klick (CPC) oder pro Impression (CPM = pro Sichtkontakt, unabhängig ob jemand klickt oder nicht).
-def generate_synthetic_data(num_samples=100000):
-    """
-    Generate synthetic advertising data with realistic correlations and a constrained keyword space.
-    
-    Parameters:
-    -----------
-    num_samples : int, default=100000
-        Number of data points to generate in the synthetic dataset.
-        
-    Returns:
-    --------
-    pandas.DataFrame
-        Structured dataset with advertising metrics exhibiting biologically-inspired 
-        correlative properties and constraints.
-    
-    Notes:
-    ------
-    The function implements a Monte Carlo simulation approach with predetermined
-    keyword constraints, while preserving stochastic relationships between
-    advertising metrics through conditional probability distributions.
-    """
-    # Define the constrained keyword space based on specification
-    predefined_keywords = [
-        "Autoversicherung", "Elektronik kaufen", "Fitnessstudio", "Flug buchen",
-        "Gartenmöbel", "Günstige Hotels", "Haushaltsgeräte", "Hotel buchen",
-        "keyword", "Kreditvergleich", "Laptop kaufen", "Mietwagen",
-        "Online Banking", "Online Shopping", "Reifenwechsel", "Reiseversicherung",
-        "Smartphone kaufen", "Sparplan", "Steuerberatung", "Streaming Dienste",
-        "Urlaub buchen"
-    ]
-    
-    # Initialize stochastic parameters with controlled random seed for reproducibility
-    base_difficulty = np.random.beta(2.5, 3.5, num_samples)
-    
-    # Generate primary data structure with controlled keyword sampling
+def generate_synthetic_data(num_samples=1000):
     data = {
-        # Sample keywords with replacement to achieve desired dataset size
-        "keyword": np.random.choice(predefined_keywords, size=num_samples),
-        "competitiveness": np.random.beta(2, 3, num_samples),
-        "difficulty_score": np.random.uniform(0, 1, num_samples),
-        "organic_rank": np.random.randint(1, 11, num_samples),
-        "organic_clicks": np.random.randint(50, 5000, num_samples),
-        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),
-        "paid_clicks": np.random.randint(10, 3000, num_samples),
-        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),
-        "ad_spend": np.random.uniform(10, 10000, num_samples),
-        "ad_conversions": np.random.randint(0, 500, num_samples),
-        "ad_roas": np.random.uniform(0.5, 5, num_samples),
-        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),
-        "cost_per_click": np.random.uniform(0.1, 10, num_samples),
-        "cost_per_acquisition": np.random.uniform(5, 500, num_samples),
-        "previous_recommendation": np.random.choice([0, 1], size=num_samples),
-        "impression_share": np.random.uniform(0.1, 1.0, num_samples),
-        "conversion_value": np.random.uniform(0, 10000, num_samples)
+        "keyword": [f"Keyword_{i}" for i in range(num_samples)],        # Eindeutiger Name oder Identifier für das Keyword
+        "competitiveness": np.random.uniform(0, 1, num_samples),        # Wettbewerbsfähigkeit des Keywords (Wert zwischen 0 und 1). Je mehr Leute das Keyword wollen, desto näher bei 1 und somit desto teurer.
+        "difficulty_score": np.random.uniform(0, 1, num_samples),       # Schwierigkeitsgrad des Keywords organisch gute Platzierung zu erreichen (Wert zwischen 0 und 1). 1 = mehr Aufwand und Optimierung nötig.
+        "organic_rank": np.random.randint(1, 11, num_samples),          # Organischer Rang, z.B. Position in Suchergebnissen (1 bis 10)
+        "organic_clicks": np.random.randint(50, 5000, num_samples),     # Anzahl der Klicks auf organische Suchergebnisse
+        "organic_ctr": np.random.uniform(0.01, 0.3, num_samples),       # Klickrate (CTR) für organische Suchergebnisse
+        "paid_clicks": np.random.randint(10, 3000, num_samples),        # Anzahl der Klicks auf bezahlte Anzeigen
+        "paid_ctr": np.random.uniform(0.01, 0.25, num_samples),         # Klickrate (CTR) für bezahlte Anzeigen
+        "ad_spend": np.random.uniform(10, 10000, num_samples),          # Werbebudget bzw. Ausgaben für Anzeigen
+        "ad_conversions": np.random.randint(0, 500, num_samples),       # Anzahl der Conversions (Erfolge) von Anzeigen
+        "ad_roas": np.random.uniform(0.5, 5, num_samples),              # Return on Ad Spend (ROAS) für Anzeigen, wobei Werte < 1 Verlust anzeigen
+        "conversion_rate": np.random.uniform(0.01, 0.3, num_samples),   # Conversion-Rate (Prozentsatz der Besucher, die konvertieren)
+        "cost_per_click": np.random.uniform(0.1, 10, num_samples),      # Kosten pro Klick (CPC)
+        "cost_per_acquisition": np.random.uniform(5, 500, num_samples), # Kosten pro Akquisition (CPA)
+        "previous_recommendation": np.random.choice([0, 1], size=num_samples),  # Frühere Empfehlung (0 = nein, 1 = ja)
+        "impression_share": np.random.uniform(0.1, 1.0, num_samples),   # Anteil an Impressionen (Sichtbarkeit der Anzeige) im Vergleich mit allen anderen die dieses Keyword wollen
+        "conversion_value": np.random.uniform(0, 10000, num_samples)    # Monetärer Wert der Conversions (Ein monetärer Wert, der den finanziellen Nutzen aus den erzielten Conversions widerspiegelt. Dieser Wert gibt an, wie viel Umsatz oder Gewinn durch die Conversions generiert wurde – je höher der Wert, desto wertvoller sind die Conversions aus Marketingsicht.)
     }
-    
-    # Introduce realistic correlations with controlled variance
-    
-    # Competitiveness influences difficulty score with stochastic perturbation
-    data["difficulty_score"] = 0.7 * data["competitiveness"] + 0.3 * base_difficulty
-    
-    # Difficulty score determines organic ranking with Gaussian noise
-    data["organic_rank"] = 1 + np.floor(9 * data["difficulty_score"] + 
-                                        np.random.normal(0, 1, num_samples).clip(-2, 2))
-    data["organic_rank"] = data["organic_rank"].clip(1, 10).astype(int)
-    
-    # CTR follows beta distribution modulated by reciprocal rank relationship
-    base_ctr = np.random.beta(1.5, 10, num_samples)
-    rank_effect = (11 - data["organic_rank"]) / 10
-    data["organic_ctr"] = (base_ctr * rank_effect * 0.3).clip(0.01, 0.3)
-    
-    # Organic clicks derived from log-normal impression distribution and CTR
-    base_impressions = np.random.lognormal(8, 1, num_samples).astype(int)
-    data["organic_clicks"] = (base_impressions * data["organic_ctr"]).astype(int)
-    
-    # Paid CTR correlated with organic CTR plus multiplicative noise
-    data["paid_ctr"] = (data["organic_ctr"] * 
-                        np.random.normal(1, 0.3, num_samples)).clip(0.01, 0.25)
-    
-    # Paid clicks from log-normal impression distribution
-    paid_impressions = np.random.lognormal(7, 1.2, num_samples).astype(int)
-    data["paid_clicks"] = (paid_impressions * data["paid_ctr"]).astype(int)
-    
-    # CPC correlates with competitiveness through linear transformation with noise
-    data["cost_per_click"] = (0.5 + 9.5 * data["competitiveness"] * 
-                              np.random.normal(1, 0.2, num_samples)).clip(0.1, 10)
-    
-    # Ad spend calculated deterministically from clicks and CPC
-    data["ad_spend"] = data["paid_clicks"] * data["cost_per_click"]
-    
-    # Conversion rate from beta distribution reflecting e-commerce behavior
-    data["conversion_rate"] = np.random.beta(1.2, 15, num_samples).clip(0.01, 0.3)
-    
-    # Ad conversions deterministically derived from clicks and conversion rate
-    data["ad_conversions"] = (data["paid_clicks"] * data["conversion_rate"]).astype(int)
-    
-    # Conversion value with log-normal distribution scaled by conversions
-    base_value = np.random.lognormal(4, 1, num_samples)
-    data["conversion_value"] = data["ad_conversions"] * base_value
-    
-    # Cost per acquisition with proper handling of division edge cases
-    with np.errstate(divide='ignore', invalid='ignore'):
-        data["cost_per_acquisition"] = np.where(
-            data["ad_conversions"] > 0, 
-            data["ad_spend"] / data["ad_conversions"], 
-            500  # Default high CPA for no conversions
-        ).clip(5, 500)
-    
-    # ROAS calculated with proper numerical stability considerations
-    with np.errstate(divide='ignore', invalid='ignore'):
-        data["ad_roas"] = np.where(
-            data["ad_spend"] > 0,
-            data["conversion_value"] / data["ad_spend"],
-            0
-        ).clip(0.5, 5)
-    
-    # Impression share inversely correlated with competitiveness
-    data["impression_share"] = (1 - 0.6 * data["competitiveness"] * 
-                               np.random.normal(1, 0.2, num_samples)).clip(0.1, 1.0)
-    
-    # Ensure keyword-specific coherence in metrics through post-processing
-    df = pd.DataFrame(data)
-    
-    # Sort by keyword to ensure sequential organization beneficial for environment
-    df_sorted = df.sort_values('keyword').reset_index(drop=True)
-    
-    return df_sorted
+    return pd.DataFrame(data)
+
+# Example of a synthetic dataset
+'''
+test = generate_synthetic_data(10)
+test.head()
+print(test.shape)
+print(test.columns)
+'''
+
+# Load synthetic dataset
+''''
+dataset = generate_synthetic_data(1000)
+'''
 
 def split_dataset_by_ratio(dataset, train_ratio=0.8):
     """
@@ -815,10 +722,26 @@ def learn(params=None, train_data=None, test_data=None):
     - TensorBoard is used for logging training metrics.
     """
     
-    dataset = pd.read_csv(file_path)
-
-    # Split it into training and test data
-    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+    if (train_data is not None) and (test_data is not None):
+        # Use the provided training and test data
+        dataset_training = train_data
+        dataset_test = test_data
+    else:
+        # Load the organized dataset if the file exists
+        if os.path.exists(file_path):
+            # If file exists, load it directly
+            dataset = pd.read_csv(file_path)
+            print(f"Dataset loaded from {file_path}")
+        else:
+            # If file doesn't exist, generate synthetic data
+            print(f"File {file_path} not found. Generating synthetic data...")       
+            # Create the directory if it doesn't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            dataset = generate_synthetic_data(1000)
+            dataset = pd.read_csv(file_path)
+            print(f"Dataset loaded from newly created {file_path}")
+        # Split it into training and test data
+        dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
 
     # Initialize Environment
     env = AdOptimizationEnv(dataset_training, device=device)
@@ -1012,7 +935,7 @@ if __name__ == "__main__":
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
         # Generate synthetic data
-        synthetic_data = generate_synthetic_data(100000)
+        synthetic_data = generate_synthetic_data(1000)
         
         # Save the generated data to CSV
         synthetic_data.to_csv(file_path, index=False)
