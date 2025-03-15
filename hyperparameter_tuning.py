@@ -38,13 +38,8 @@ def objective(trial, dataset):
         'weight_decay':  trial.suggest_float('weight_decay', 1e-6, 1e-4)                # Weight decay for regularization
     }
     
-    # Split dataset
-    if dataset is None:
-        dataset = generate_synthetic_data(1000)
-    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
-    
     # Run training with the sampled hyperparameters
-    best_reward = learn(params, dataset_training, dataset_test)
+    best_reward = learn(params)
     
     return best_reward
 
