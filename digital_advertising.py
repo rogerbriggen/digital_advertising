@@ -344,7 +344,6 @@ class AdOptimizationEnv(EnvBase):
         self.obs = next_obs
         print(f'Step (_step): {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
 
-        # PK: todo: is this really needed? seems tensordict is not used anymore after this assignment
         tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
         tensordict["observation"] = self.obs
         tensordict["reward"] = torch.tensor(reward, dtype=torch.float32, device=self.device)
