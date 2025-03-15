@@ -344,12 +344,14 @@ class AdOptimizationEnv(EnvBase):
         self.obs = next_obs
         print(f'Step (_step): {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
 
+        # tensordict is used from EnvBase later on, so we add the current state here
         tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
         tensordict["observation"] = self.obs
         tensordict["reward"] = torch.tensor(reward, dtype=torch.float32, device=self.device)
         tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device)
         tensordict["terminated"] = torch.tensor(bool(terminated), dtype=torch.bool, device=self.device)
         tensordict["truncated"] = torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
+        # next as return value is also used by EnvBase and later added to tensordict by EnvBase
         next = TensorDict({
             "done": torch.tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device),
             "observation": next_obs,
