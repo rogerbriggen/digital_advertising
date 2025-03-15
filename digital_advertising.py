@@ -18,11 +18,12 @@ from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
 from torchrl.envs import EnvBase
 from torchrl.modules import EGreedyModule, MLP, QValueModule
 from torchrl.objectives import DQNLoss, SoftUpdate
+
 # Define the file path
 file_path = 'data/organized_dataset.csv'
 
 # Generate Realistic Synthetic Data. 
-# This is coming from Ilja's code and is left in the code for educational purposes.
+# This is coming from Ilja's code and is left in the code for educational purposes what fields we have also in the csv file.
 # Keyword-Platzierung-Arten:
 #    - Organisch: Erscheint aufgrund des Suchalgorithmus, ohne Bezahlung.
 #    - Paid: Wird aufgrund einer Werbekampagne oder bezahlten Platzierung angezeigt.
@@ -50,6 +51,7 @@ def generate_synthetic_data(num_samples=1000):
         "conversion_value": np.random.uniform(0, 10000, num_samples)    # Monetärer Wert der Conversions (Ein monetärer Wert, der den finanziellen Nutzen aus den erzielten Conversions widerspiegelt. Dieser Wert gibt an, wie viel Umsatz oder Gewinn durch die Conversions generiert wurde – je höher der Wert, desto wertvoller sind die Conversions aus Marketingsicht.)
     }
     return pd.DataFrame(data)
+
 
 # Example of a synthetic dataset
 '''
@@ -935,7 +937,10 @@ if __name__ == "__main__":
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
         # Generate synthetic data
-        synthetic_data = generate_synthetic_data(1000)
+        synthetic_data = pd.DataFrame()
+
+        for i in range(5000):
+            synthetic_data = pd.concat([synthetic_data, generate_synthetic_data(20)], ignore_index=True)
         
         # Save the generated data to CSV
         synthetic_data.to_csv(file_path, index=False)
