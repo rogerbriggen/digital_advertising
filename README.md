@@ -9,7 +9,7 @@ The project consists of five main components:
 4. **Training Analysis (`tensorboard-analyzer.py`)** - Analyzes TensorBoard logs to provide insights into the training process
 5. **Interactive Data Explorer (`analyze_raw_data.py`)** - Provides an interactive Dash web application for exploring and visualizing the raw advertising data
 
-## Link-Sammlung
+## Link-Collection
 - [Analyzing Marketing Performance: Paid Search Campaign](https://medium.com/@farizalfitraaa/analyzing-marketing-performance-paid-search-campaign-6a9ed5f71c7f) ([Dataset](https://www.kaggle.com/datasets/marceaxl82/shopping-mall-paid-search-campaign-dataset))
 - [PPC Campaign Performance Data](https://www.kaggle.com/datasets/aashwinkumar/ppc-campaign-performance-data)
 
