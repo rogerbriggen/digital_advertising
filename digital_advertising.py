@@ -280,7 +280,7 @@ class AdOptimizationEnv(EnvBase):
                                         device=self.device) - self.cash_mean) / self.cash_std
         obs = TensorDict({
             "keyword_features": keyword_features,  # Current pki for each keyword
-            "cash": torch.tensor(cash_normalized.clone().detach(), dtype=torch.float32, device=self.device),  # Current cash balance
+            "cash": cash_normalized,  # Current cash balance
             "holdings": self.holdings.clone()  # 1 for each keyword if we are holding
         }, batch_size=[])
         if tensordict is None:
