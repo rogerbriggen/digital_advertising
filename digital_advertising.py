@@ -21,12 +21,13 @@ from torchrl.objectives import DQNLoss, SoftUpdate
 # Define the file path
 file_path = 'data/organized_dataset.csv'
 
-# Generate Realistic Synthetic Data. This is coming from Ilja's code
-# Platzierung:
+# Generate Realistic Synthetic Data. 
+# This is coming from Ilja's code and is left in the code for educational purposes.
+# Keyword-Platzierung-Arten:
 #    - Organisch: Erscheint aufgrund des Suchalgorithmus, ohne Bezahlung.
 #    - Paid: Wird aufgrund einer Werbekampagne oder bezahlten Platzierung angezeigt.
 # Kosten:
-#    - Organisch: Es fallen in der Regel keine direkten Kosten pro Klick oder Impression an.
+#    - Organisch: Es fallen in der Regel keine (direkten) Kosten pro Klick oder Impression an.
 #    - Paid: Werbetreibende zahlen oft pro Klick (CPC) oder pro Impression (CPM = pro Sichtkontakt, unabhängig ob jemand klickt oder nicht).
 def generate_synthetic_data(num_samples=1000):
     data = {
@@ -50,7 +51,7 @@ def generate_synthetic_data(num_samples=1000):
     }
     return pd.DataFrame(data)
 
-# Example
+# Example of a synthetic dataset
 '''
 test = generate_synthetic_data(10)
 test.head()
@@ -58,48 +59,9 @@ print(test.shape)
 print(test.columns)
 '''
 
-
 # Load synthetic dataset
 ''''
 dataset = generate_synthetic_data(1000)
-'''
-
-
-def read_and_organize_csv(file_path):
-    """
-    Reads a CSV file, organizes the data by keywords, and returns the organized DataFrame.
-    This function performs the following steps:
-    1. Reads the CSV file from the given file path into a DataFrame.
-    2. Drops the 'step' column from the DataFrame.
-    3. Extracts unique keywords from the 'keyword' column.
-    4. Organizes the data by iterating through the first 5000 rows for each keyword and concatenates the rows into a new DataFrame.
-    Args:
-        file_path (str): The file path to the CSV file.
-    Returns:
-        pd.DataFrame: A DataFrame containing the organized data, with the index reset.
-    """
-    df = pd.read_csv(file_path)
-    organized_data = pd.DataFrame()
-
-    # Skip the 'step' column
-    df = df.drop(columns=['step'])
-
-    # Get unique keywords
-    keywords = df['keyword'].unique()
-
-    # Organize data
-    for i in range(5000):
-        for keyword in keywords:
-            keyword_data = df[df['keyword'] == keyword]
-            if len(keyword_data) > i:
-                organized_data = pd.concat([organized_data, keyword_data.iloc[[i]]])
-
-    return organized_data.reset_index(drop=True)
-
-# Example usage
-''''
-dataset = pd.read_csv('data/organized_dataset.csv')
-dataset.head()
 '''
 
 def split_dataset_by_ratio(dataset, train_ratio=0.8):
@@ -123,8 +85,8 @@ def split_dataset_by_ratio(dataset, train_ratio=0.8):
     train_dataset = dataset.iloc[0:rows_training].reset_index(drop=True)
     test_dataset = dataset.iloc[rows_training:].reset_index(drop=True)
     
-    print(f"Training dataset: {len(train_dataset)} rows, {len(train_dataset['keyword'].unique())} keywords")
-    print(f"Test dataset: {len(test_dataset)} rows, {len(test_dataset['keyword'].unique())} keywords")
+    print(f"Training dataset: {len(train_dataset)} rows, {len(train_dataset['keyword'].unique())} keywords ({int(len(train_dataset) / len(train_dataset['keyword'].unique()))} rows per keyword)")
+    print(f"Test dataset: {len(test_dataset)} rows, {len(test_dataset['keyword'].unique())} keywords ({int(len(test_dataset) / len(test_dataset['keyword'].unique()))} rows per keyword)")
     
     return train_dataset, test_dataset
 
@@ -135,11 +97,13 @@ def get_entry_from_dataset(df, index):
     This function calculates the number of unique keywords in the DataFrame
     and uses this number to determine the subset of rows to return. The subset
     is determined by the given index and the number of unique keywords.
+
     Parameters:
-    df (pandas.DataFrame): The DataFrame containing the dataset.
-    index (int): The index to determine which subset of rows to retrieve.
+        df (pandas.DataFrame): The DataFrame containing the dataset.
+        index (int): The index to determine which subset of rows to retrieve.
+
     Returns:
-    pandas.DataFrame: A subset of the DataFrame containing rows corresponding
+        pandas.DataFrame: A subset of the DataFrame containing rows corresponding
                       to the specified index and the number of unique keywords.
     """
     # Count unique keywords
@@ -174,6 +138,7 @@ print(entry)
 class AdOptimizationEnv(EnvBase):
     """
     AdOptimizationEnv is an environment for optimizing digital advertising strategies using reinforcement learning.
+
     Attributes:
         initial_cash (float): Initial cash balance for the environment.
         dataset (pd.DataFrame): Dataset containing keyword metrics.
@@ -187,6 +152,7 @@ class AdOptimizationEnv(EnvBase):
         holdings (torch.Tensor): Tensor representing the current holdings of keywords.
         cash (float): Current cash balance.
         obs (TensorDict): Current observation of the environment.
+
     Methods:
         __init__(self, dataset, initial_cash=100000.0, device="cpu"):
             Initializes the AdOptimizationEnv with the given dataset, initial cash, and device.
@@ -203,10 +169,12 @@ class AdOptimizationEnv(EnvBase):
     def __init__(self, dataset, initial_cash=100000.0, device="cpu"):
         """
         Initializes the digital advertising environment.
+
         Args:
             dataset (Any): The dataset containing keyword features and other relevant data.
             initial_cash (float, optional): The initial amount of cash available for advertising. Defaults to 100000.0.
             device (str, optional): The device to run the environment on, either "cpu" or "cuda". Defaults to "cpu".
+
         Attributes:
             initial_cash (float): The initial amount of cash available for advertising.
             dataset (Any): The dataset containing keyword features and other relevant data.
@@ -238,15 +206,12 @@ class AdOptimizationEnv(EnvBase):
             truncated=Binary(shape=(1,), dtype=torch.bool)
         )
 
-        self.feature_means = torch.tensor(dataset[feature_columns].mean().values,
-                                          dtype=torch.float32, device=device)
-        self.feature_stds = torch.tensor(dataset[feature_columns].std().values,
-                                         dtype=torch.float32, device=device)
+        self.feature_means = torch.tensor(dataset[feature_columns].mean().values, dtype=torch.float32, device=device)
+        self.feature_stds = torch.tensor(dataset[feature_columns].std().values, dtype=torch.float32, device=device)
         # Prevent division by zero
-        self.feature_stds = torch.where(self.feature_stds > 0, self.feature_stds,
-                                        torch.ones_like(self.feature_stds))
+        self.feature_stds = torch.where(self.feature_stds > 0, self.feature_stds, torch.ones_like(self.feature_stds))
 
-        # Add cash normalization
+        # Cash normalization
         self.cash_mean = initial_cash / 2
         self.cash_std = initial_cash / 4
 
@@ -255,8 +220,10 @@ class AdOptimizationEnv(EnvBase):
     def _reset(self, tensordict: TensorDict =None):
         """
         Resets the environment to its initial state.
+
         Args:
             tensordict (TensorDict, optional): A TensorDict to be updated with the reset state. If None, a new TensorDict is created.
+
         Returns:
             TensorDict: A TensorDict containing the reset state of the environment, including:
                 - "done" (torch.tensor): A boolean tensor indicating if the episode is done.
@@ -271,22 +238,23 @@ class AdOptimizationEnv(EnvBase):
         self.current_step = 0
         self.holdings = torch.zeros(self.num_keywords, dtype=torch.int, device=self.device) # 0 = not holding, 1 = holding keyword
         self.cash = self.initial_cash
-        #sample = self.dataset.sample(1)
-        #state = torch.tensor(sample[feature_columns].values, dtype=torch.float32).squeeze()
+
         # Create the initial observation.
         keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
         keyword_features = (keyword_features - self.feature_means) / self.feature_stds
-        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32,
-                                        device=self.device) - self.cash_mean) / self.cash_std
+        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32, device=self.device) - self.cash_mean) / self.cash_std
+
         obs = TensorDict({
             "keyword_features": keyword_features,  # Current pki for each keyword
             "cash": cash_normalized,  # Current cash balance
             "holdings": self.holdings.clone()  # 1 for each keyword if we are holding
         }, batch_size=[])
+
         if tensordict is None:
             tensordict = TensorDict({}, batch_size=[])
         else:
             tensordict = tensordict.empty()
+
         tensordict = tensordict.update({
             "done": torch.tensor(False, dtype=torch.bool, device=self.device),
             "observation": obs,
@@ -303,10 +271,13 @@ class AdOptimizationEnv(EnvBase):
     def _step(self, tensordict: TensorDict):
         """
         Perform a single step in the environment using the provided tensor dictionary.
+
         Args:
             tensordict (TensorDict): A dictionary containing the current state and action.
+
         Returns:
             TensorDict: A dictionary containing the next state, reward, and termination status.
+
         The function performs the following steps:
         1. Extracts the action from the input tensor dictionary.
         2. Determines the index of the selected keyword.
@@ -327,7 +298,6 @@ class AdOptimizationEnv(EnvBase):
 
         current_pki = get_entry_from_dataset(self.dataset, self.current_step)
         #action = tensordict["action"].argmax(dim=-1).item()
-
 
         # Update cash based on the action
         ad_roas = 0.0
@@ -362,8 +332,8 @@ class AdOptimizationEnv(EnvBase):
         next_keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
         next_keyword_features = (next_keyword_features - self.feature_means) / self.feature_stds
         # todo: most probably we need to remove some columns from the state so we only have the features for the agent to see... change it also in reset
-        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32,
-                                        device=self.device) - self.cash_mean) / self.cash_std
+        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32, device=self.device) - self.cash_mean) / self.cash_std
+
         next_obs = TensorDict({
             "keyword_features": next_keyword_features,  # next pki for each keyword
             "cash": cash_normalized.clone().detach(),  # Current cash balance
@@ -372,7 +342,7 @@ class AdOptimizationEnv(EnvBase):
         
         # Update the state
         self.obs = next_obs
-        print(f'Step: {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
+        print(f'Step (_step): {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
 
         # PK: todo: is this really needed? seems tensordict is not used anymore after this assignment
         tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
@@ -388,11 +358,9 @@ class AdOptimizationEnv(EnvBase):
             "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
             "terminated": torch.tensor(bool(terminated), dtype=torch.bool, device=self.device),
             "truncated": torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
-
         }, batch_size=tensordict.batch_size)
         
         return next
-
 
     def _compute_reward(self, action, current_pki, action_idx, ad_roas):
         """Compute reward based on the selected keyword's metrics"""
@@ -417,10 +385,12 @@ class AdOptimizationEnv(EnvBase):
 class FlattenInputs(nn.Module):
     """
     A custom PyTorch module to flatten and combine keyword features, cash, and holdings into a single tensor.
+
     Methods
     -------
     forward(keyword_features, cash, holdings)
         Flattens and combines the input tensors into a single tensor.
+
     Parameters
     ----------
     keyword_features : torch.Tensor
@@ -429,6 +399,7 @@ class FlattenInputs(nn.Module):
         A tensor containing cash values with shape [batch] or [batch, 1] or a scalar.
     holdings : torch.Tensor
         A tensor containing holdings with shape [batch, num_keywords] or [num_keywords].
+
     Returns
     -------
     torch.Tensor
@@ -664,6 +635,7 @@ def create_policy(env, feature_dim, num_keywords, device):
     
     return policy.to(device)
 
+
 def run_inference(model_path, dataset_test, device, feature_columns):
     """
     Run inference using a saved model
@@ -706,7 +678,7 @@ def run_inference(model_path, dataset_test, device, feature_columns):
         total_reward += reward
         done = test_td["done"].item()
         
-        print(f"Step: {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
+        print(f"Step (run_inference): {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
     
     print(f"Total inference reward: {total_reward}")
     return total_reward, inference_policy
@@ -715,6 +687,7 @@ def run_inference(model_path, dataset_test, device, feature_columns):
 def learn(params=None, train_data=None, test_data=None):
     """
     Trains an advertisement optimization model using reinforcement learning.
+
     Parameters:
     -----------
     params : dict, optional
@@ -733,10 +706,12 @@ def learn(params=None, train_data=None, test_data=None):
         Training dataset. If None, synthetic data will be generated.
     test_data : DataFrame, optional
         Test dataset. If None, synthetic data will be generated.
+
     Returns:
     --------
     float
         The best test reward achieved during training.
+
     Notes:
     ------
     - The function initializes the environment, policy, and exploration module.
@@ -928,9 +903,7 @@ def learn(params=None, train_data=None, test_data=None):
 
     t1 = time.time()
 
-    print(
-        f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s."
-    )
+    print(f"Finished after {total_count} steps, {total_episodes} episodes and in {t1-t0}s.")
     print(f"Best test performance: {best_test_reward}")
 
     # Run inference with the best model
@@ -941,14 +914,14 @@ def learn(params=None, train_data=None, test_data=None):
     else:
         return best_test_reward
 
-#some global variables
+# Some global variables
 # Select the best device for our machine
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
     "mps" if torch.backends.mps.is_available() else
     "cpu"
 )
-print(device)
+print("Device used: ", device)
 
 # Define the feature columns
 feature_columns = ["competitiveness", "difficulty_score", "organic_rank", "organic_clicks", "organic_ctr", "paid_clicks", "paid_ctr", "ad_spend", "ad_conversions", "ad_roas", "conversion_rate", "cost_per_click"]
