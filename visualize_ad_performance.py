@@ -15,6 +15,9 @@ from collections import defaultdict
 import re
 import sys
 
+# On Windows, there is a problem OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 # Add the directory containing digital_advertising.py to the Python path
 # This allows importing without modifying the original file
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
