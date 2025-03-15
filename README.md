@@ -30,11 +30,6 @@ The conda environment is named torchrl_ads.
 
 ## Setup and Installation
 
-On Windows, change the values in environment.yml for the following packages:
-
-- numpy=1.26.4
-- pandas=2.2.3
-
 ```bash
 # Clone the repository
 git clone https://github.com/mac-christ/digital_advertising.git
