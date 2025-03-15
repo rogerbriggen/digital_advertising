@@ -116,13 +116,9 @@ def split_dataset_by_ratio(dataset, train_ratio=0.8):
     # Get all unique keywords
     keywords = dataset['keyword'].unique()
     
-    # Fetch the amount of rows for each keyword
-    entries_in_dataset = len(dataset) / keywords.size
-    
     # Split rows into training and test sets
     rows_training = round((len(dataset) * train_ratio) / keywords.size) * keywords.size # Round to the nearest multiple of the number of keywords
-    rows_test = int(len(dataset) - rows_training)
-
+    
     # Create training and test datasets
     train_dataset = dataset.iloc[0:rows_training].reset_index(drop=True)
     test_dataset = dataset.iloc[rows_training:].reset_index(drop=True)
@@ -715,31 +711,61 @@ def run_inference(model_path, dataset_test, device, feature_columns):
     print(f"Total inference reward: {total_reward}")
     return total_reward, inference_policy
 
-#def learn():
-    # Load the organized dataset
-    # dataset = pd.read_csv('data/organized_dataset.csv')
-    # Split it into training and test data
-    # dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
+
 def learn(params=None, train_data=None, test_data=None):
-    # Load the organized dataset
-    # Check if the file exists
-    if os.path.exists(file_path):
-        # If file exists, load it directly
-        dataset = pd.read_csv(file_path)
-        print(f"Dataset loaded from {file_path}")
+    """
+    Trains an advertisement optimization model using reinforcement learning.
+    Parameters:
+    -----------
+    params : dict, optional
+        Dictionary containing hyperparameters for training. If None, default values will be used.
+        - lr : float, optional
+            Learning rate for the optimizer. Default is 0.001.
+        - batch_size : int, optional
+            Batch size for training. Default is 128.
+        - gamma : float, optional
+            Discount factor for future rewards. Default is 0.99.
+        - weight_decay : float, optional
+            Weight decay (L2 regularization) for the optimizer. Default is 1e-5.
+        - eps : float, optional
+            Initial value for epsilon in epsilon-greedy exploration. Default is 0.99.
+    train_data : DataFrame, optional
+        Training dataset. If None, synthetic data will be generated.
+    test_data : DataFrame, optional
+        Test dataset. If None, synthetic data will be generated.
+    Returns:
+    --------
+    float
+        The best test reward achieved during training.
+    Notes:
+    ------
+    - The function initializes the environment, policy, and exploration module.
+    - It uses a replay buffer to store experiences and performs training using DQN loss.
+    - The model is periodically evaluated on the test dataset.
+    - The best model is saved based on test performance.
+    - TensorBoard is used for logging training metrics.
+    """
+    
+    if (train_data is not None) and (test_data is not None):
+        # Use the provided training and test data
+        dataset_training = train_data
+        dataset_test = test_data
     else:
-        # If file doesn't exist, generate synthetic data
-        print(f"File {file_path} not found. Generating synthetic data...")       
-        # Create the directory if it doesn't exist
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        dataset = generate_synthetic_data(1000)
-        dataset = pd.read_csv(file_path)
-        print(f"Dataset loaded from newly created {file_path}")
-    #    # Split it into training and test data
-    #    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
-    # dataset = generate_synthetic_data(1000)
-    dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
-    train_data, test_data = dataset_training, dataset_test
+        # Load the organized dataset if the file exists
+        if os.path.exists(file_path):
+            # If file exists, load it directly
+            dataset = pd.read_csv(file_path)
+            print(f"Dataset loaded from {file_path}")
+        else:
+            # If file doesn't exist, generate synthetic data
+            print(f"File {file_path} not found. Generating synthetic data...")       
+            # Create the directory if it doesn't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            dataset = generate_synthetic_data(1000)
+            dataset = pd.read_csv(file_path)
+            print(f"Dataset loaded from newly created {file_path}")
+        # Split it into training and test data
+        dataset_training, dataset_test = split_dataset_by_ratio(dataset, train_ratio=0.8)
 
     # Initialize Environment
     env = AdOptimizationEnv(dataset_training, device=device)
@@ -748,6 +774,19 @@ def learn(params=None, train_data=None, test_data=None):
     feature_dim = len(feature_columns)
     num_keywords = env.num_keywords
 
+    # Hyperparameters
+    if params is None:
+        # Create an empty one, the default values will be used when fetching the hyperparameters
+        params = {
+        }
+    # Extract hyperparameters
+    lr = params.get('lr', 0.001) # Learning rate for the optimizer
+    batch_size = params.get('batch_size', 128) # Batch size for training
+    weight_decay = params.get('weight_decay', 1e-5) # Weight decay for regularization
+    exploration_eps_init = params.get('exploration_eps_init', 0.9) # Initial value for epsilon in epsilon-greedy exploration
+    exploration_eps_end = params.get('exploration_eps_end', 0.01)   # Final value for epsilon in epsilon-greedy exploration
+    softupdate_eps = params.get('softupdate_eps', 0.99)  # Soft update rate for target network
+
     # Create the main policy for training
     policy = create_policy(env, feature_dim, num_keywords, device)
 
@@ -755,7 +794,7 @@ def learn(params=None, train_data=None, test_data=None):
     policy_eval = create_policy(env, feature_dim, num_keywords, device)
 
     exploration_module = EGreedyModule(
-        env.action_spec, annealing_num_steps=100_000, eps_init=0.9, eps_end=0.01
+        env.action_spec, annealing_num_steps=100_000, eps_init=exploration_eps_init, eps_end=exploration_eps_end
     )
     exploration_module = exploration_module.to(device)
     policy_explore = TensorDictSequential(policy, exploration_module).to(device)
@@ -774,29 +813,9 @@ def learn(params=None, train_data=None, test_data=None):
     rb = ReplayBuffer(storage=LazyTensorStorage(replay_buffer_size))
 
     loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
-#    lr=0.001
-#    weight_decay=1e-5
-#    eps=0.99
-    if params is None:
-        params = {
-            'lr': 0.001,
-            'batch_size': 128,
-            'gamma': 0.99,
-            'weight_decay': 1e-5,
-            'eps_init': 0.99,
-            'eps_end': 0.01
-        }
-
-    # Extract hyperparameters
-    lr = params.get('lr', 0.001)
-    batch_size = params.get('batch_size', 128)
-    gamma = params.get('gamma', 0.99)
-    weight_decay = params.get('weight_decay', 1e-5)
-    eps = params.get('eps_init', 0.99)
-    eps_end = params.get('eps_end', 0.01)
-
+    
     optim = Adam(loss.parameters(), lr=lr, weight_decay=weight_decay)  # Add weight decay for regularization
-    updater = SoftUpdate(loss, eps=eps)
+    updater = SoftUpdate(loss, eps=softupdate_eps)
 
     total_count = 0
     total_episodes = 0
@@ -814,10 +833,13 @@ def learn(params=None, train_data=None, test_data=None):
     writer.add_text("Num Keywords", str(num_keywords))
     writer.add_text("init_rand_steps", str(init_rand_steps))  
     writer.add_text("frames_per_batch", str(frames_per_batch))
+    writer.add_text("batch_size", str(batch_size))
     writer.add_text("optim_steps", str(optim_steps))
     writer.add_text("lr", str(lr))
     writer.add_text("weight_decay", str(weight_decay))
-    writer.add_text("eps", str(eps))
+    writer.add_text("exploration_eps_init", str(exploration_eps_init))
+    writer.add_text("exploration_eps_end", str(exploration_eps_end))
+    writer.add_text("softupdate_eps", str(softupdate_eps))
  
     for i, data in enumerate(collector):
         # Write data in replay buffer
@@ -829,7 +851,7 @@ def learn(params=None, train_data=None, test_data=None):
         if len(rb) > init_rand_steps:
             # Optim loop (we do several optim steps per batch collected for efficiency)
             for _ in range(optim_steps):
-                sample = rb.sample(128)
+                sample = rb.sample(batch_size)
                 total_count += data.numel()
 
                 # Make sure sample is on the correct device
@@ -956,14 +978,3 @@ if __name__ == "__main__":
     
     # Now run the learning process
     learn()
-
-''''
-Todo:
-- ✅ Clean up the code
-- ✅ Split training and test data (RB)
-- ✅ Implement tensorboard (PK, MAC)
-- Implement the visualization (see tensorboard) (EO)
-- ✅ Implement the saving of the model (RB)
-- ✅Implement the inference (RB)
-- Implement the optuna hyperparameter tuning (UT)
-'''''

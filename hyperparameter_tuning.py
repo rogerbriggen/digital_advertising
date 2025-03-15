@@ -29,10 +29,13 @@ def objective(trial, dataset):
     """
     # Sample hyperparameters
     params = {
-        'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [32, 64, 128, 256]),
-        'gamma': trial.suggest_float('gamma', 0.9, 0.999),
-        'eps_init': trial.suggest_float('eps_init', 0.5, 1.0)
+        'lr': trial.suggest_float('lr', 1e-4, 1e-2, log=True),                          # Learning rate for the optimizer
+        'batch_size': trial.suggest_categorical('batch_size', [32, 64, 128, 256]),      # Batch size for training
+        'exploration_eps_init': trial.suggest_float('exploration_eps_init', 0.5, 1.0),  # Initial value for epsilon in epsilon-greedy exploration
+        'exploration_eps_end': trial.suggest_float('exploration_eps_end', 0.01, 0.1),   # Final value for epsilon in epsilon-greedy exploration
+        'softupdate_eps': trial.suggest_float('softupdate_eps', 0.9, 0.99),             # Soft update rate for target network
+        'gamma': trial.suggest_float('gamma', 0.9, 0.99),                               # Discount factor for future rewards
+        'weight_decay':  trial.suggest_float('weight_decay', 1e-6, 1e-4)                # Weight decay for regularization
     }
     
     # Split dataset
