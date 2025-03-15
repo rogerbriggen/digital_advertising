@@ -891,15 +891,6 @@ def learn(params=None, train_data=None, test_data=None):
                             # Get Q-values
                             test_td = policy_eval(test_td)
 
-                            # Check and handle NaN values in Q-values
-                            q_values = test_td["action_value"]
-                            best_idx = q_values.argmax(dim=-1).item()
-
-                            # Create one-hot action
-                            action = torch.zeros_like(q_values)
-                            action[..., best_idx] = 1
-                            test_td["action"] = action
-
                         # Step in the test environment
                         test_td = test_env.step(test_td)
                         reward = test_td["reward"].item()
