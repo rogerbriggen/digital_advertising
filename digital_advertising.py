@@ -266,7 +266,6 @@ class AdOptimizationEnv(EnvBase):
         })
         
         self.obs = obs
-        # print(f'Reset: Step: {self.current_step}')
         return tensordict
 
 
@@ -294,12 +293,11 @@ class AdOptimizationEnv(EnvBase):
         """
         # Get the action from the input tensor dictionary. 
         action = tensordict["action"]
-        #action_idx = action.argmax(dim=-1).item()  # Get the index of the selected keyword
         true_indices = torch.nonzero(action, as_tuple=True)[0]
         action_idx = true_indices[0] if len(true_indices) > 0 else self.action_spec.n - 1
 
         current_pki = get_entry_from_dataset(self.dataset, self.current_step)
-        #action = tensordict["action"].argmax(dim=-1).item()
+
 
         # Update cash based on the action
         ad_roas = 0.0
@@ -333,7 +331,6 @@ class AdOptimizationEnv(EnvBase):
         # Get next pki for the keywords
         next_keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
         next_keyword_features = (next_keyword_features - self.feature_means) / self.feature_stds
-        # todo: most probably we need to remove some columns from the state so we only have the features for the agent to see... change it also in reset
         cash_normalized = (torch.tensor(self.cash, dtype=torch.float32, device=self.device) - self.cash_mean) / self.cash_std
 
         next_obs = TensorDict({
