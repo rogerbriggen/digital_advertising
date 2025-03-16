@@ -9,7 +9,6 @@ import matplotlib
 # Force matplotlib to use Agg backend to prevent GUI-related errors
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import traceback
 import seaborn as sns
 import torch
 from datetime import datetime
@@ -18,13 +17,10 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from collections import defaultdict
 import re
 import sys
+import traceback
 
 # On Windows, there is a problem OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized.
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-# Add the directory containing digital_advertising.py to the Python path
-# This allows importing without modifying the original file
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Configure matplotlib to prevent buffer overflows
 def configure_matplotlib_constraints():
@@ -171,7 +167,6 @@ def parse_tensorboard_logs(logdir):
                 print(f"Warning: Could not convert {tag} to DataFrame: {e}")
     
     return metric_dfs
-
 
 def visualize_epsilon_greedy_exploration(metric_dfs, output_dir):
     """
@@ -364,85 +359,341 @@ def visualize_epsilon_greedy_exploration(metric_dfs, output_dir):
     saved_plots.append(epsilon_plot_path)
     print(f"Epsilon-greedy exploration plot saved to {epsilon_plot_path}")
     
-    # Create a second plot: Phase Performance Analysis
-    plt.figure(figsize=(10, 6), dpi=100)
-    
-    # Aggregate metrics by phase
-    phase_metrics = synth_data.groupby('phase').agg({
-        'step': ['min', 'max'],
-        'loss': 'mean',
-        'test_reward': 'mean',
-        'epsilon': 'mean'
-    }).reset_index()
-    
-    # Order phases correctly
-    phase_order = ["High Exploration", "Balanced Exploration/Exploitation", "High Exploitation"]
-    phase_metrics['order'] = phase_metrics['phase'].map({phase: i for i, phase in enumerate(phase_order)})
-    phase_metrics = phase_metrics.sort_values('order').reset_index(drop=True)
-    
-    # Compute improvement percentages
-    phase_metrics['improvement'] = 0.0
-    
-    for i in range(1, len(phase_metrics)):
-        current_reward = phase_metrics.loc[i, ('test_reward', 'mean')]
-        prev_reward = phase_metrics.loc[i-1, ('test_reward', 'mean')]
-        
-        if prev_reward > 0:
-            improvement = ((current_reward / prev_reward) - 1) * 100
-            phase_metrics.loc[i, 'improvement'] = improvement
-    
-    # Create bar charts for phase analysis
-    bar_width = 0.35
-    x = np.arange(len(phase_metrics))
-    
-    # Plot average reward by phase
-    ax1 = plt.gca()
-    reward_bars = ax1.bar(x - bar_width/2, phase_metrics[('test_reward', 'mean')], 
-                        bar_width, color='green', alpha=0.7, label='Avg Test Reward')
-    
-    # Add improvement labels
-    for i, row in phase_metrics.iterrows():
-        if i > 0:  # Skip first phase (no improvement to calculate)
-            if row['improvement'] > 0:
-                plt.text(i - bar_width/2, row[('test_reward', 'mean')] + 0.05, 
-                        f"+{row['improvement']:.1f}%", ha='center')
-    
-    # Plot average epsilon by phase
-    ax2 = ax1.twinx()
-    epsilon_bars = ax2.bar(x + bar_width/2, phase_metrics[('epsilon', 'mean')], 
-                        bar_width, color='blue', alpha=0.7, label='Avg Epsilon (ε)')
-    
-    # Configure axes
-    ax1.set_xlabel('Training Phase', fontsize=12)
-    ax1.set_ylabel('Average Test Reward', fontsize=12)
-    ax2.set_ylabel('Average Epsilon (ε)', fontsize=12)
-    
-    ax1.set_xticks(x)
-    phase_labels = [f"{row['phase']}\n(Steps {row[('step', 'min')]//1000}k-{row[('step', 'max')]//1000}k)" 
-                   for _, row in phase_metrics.iterrows()]
-    ax1.set_xticklabels(phase_labels)
-    
-    # Create combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper center')
-    
-    plt.title('Performance by Exploration Phase', fontsize=14)
-    plt.grid(True, alpha=0.3, axis='y')
-    
-    # Use subplots_adjust instead of tight_layout
-    plt.subplots_adjust(top=0.9, bottom=0.15, left=0.1, right=0.9)
-    
-    # Save the plot with constrained DPI
-    phases_plot_path = os.path.join(output_dir, "exploration_phases_analysis.png")
-    plt.savefig(phases_plot_path, dpi=100, bbox_inches="tight")
-    plt.close()
-    
-    saved_plots.append(phases_plot_path)
-    print(f"Exploration phases analysis plot saved to {phases_plot_path}")
-    
     return saved_plots
 
+def visualize_keyword_clustering(dataset, output_dir):
+    """
+    Create visualizations that help executives make keyword investment decisions
+    by clustering keywords based on their metrics.
+    
+    Args:
+        dataset (pd.DataFrame): Dataset containing keyword metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
+    """
+    print(f"Generating keyword clustering visualization for executive decision-making...")
+    os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
+    
+    # Check if we have enough keywords for meaningful clustering
+    if len(dataset['keyword'].unique()) < 5:
+        print("Warning: Not enough unique keywords for meaningful clustering (need at least 5)")
+        return saved_plots
+    
+    # Create a pivot table with keywords as rows and metrics as columns
+    keyword_metrics = dataset.pivot_table(
+        index='keyword', 
+        values=feature_columns,
+        aggfunc='mean'  # Take the average if there are multiple entries per keyword
+    ).reset_index()
+    
+    # Calculate additional metrics that executives care about
+    if 'ad_roas' in keyword_metrics.columns and 'ad_spend' in keyword_metrics.columns:
+        # Calculate expected profit
+        keyword_metrics['expected_profit'] = (keyword_metrics['ad_roas'] - 1) * keyword_metrics['ad_spend']
+    
+    if 'conversion_rate' in keyword_metrics.columns and 'paid_ctr' in keyword_metrics.columns:
+        # Calculate funnel efficiency (CTR * conversion rate)
+        keyword_metrics['funnel_efficiency'] = keyword_metrics['paid_ctr'] * keyword_metrics['conversion_rate']
+    
+    # Keep only the most business-relevant metrics for clustering
+    business_metrics = ['ad_roas', 'paid_ctr', 'conversion_rate', 'ad_spend']
+    if 'expected_profit' in keyword_metrics:
+        business_metrics.append('expected_profit')
+    if 'funnel_efficiency' in keyword_metrics:
+        business_metrics.append('funnel_efficiency')
+    
+    # Ensure all selected metrics exist in the dataset
+    business_metrics = [m for m in business_metrics if m in keyword_metrics.columns]
+    
+    # Create a copy of the dataset with just the business metrics
+    clustering_data = keyword_metrics[['keyword'] + business_metrics].copy()
+    
+    # Handle NaN values (replace with column means)
+    for col in business_metrics:
+        clustering_data[col] = clustering_data[col].fillna(clustering_data[col].mean())
+    
+    # 1. Create correlation heatmap between keywords based on metrics
+    # This visualizes which keywords behave similarly across metrics
+    
+    # Transpose the data to have keywords as columns
+    keyword_corr_data = clustering_data.set_index('keyword')[business_metrics].T
+    
+    # Calculate correlation between keywords
+    keyword_corr = keyword_corr_data.corr()
+    
+    # If we have many keywords, limit to the top ones by ad_spend or roas
+    max_keywords_in_heatmap = 20
+    if len(keyword_corr) > max_keywords_in_heatmap:
+        print(f"Too many keywords for clear visualization. Limiting to top {max_keywords_in_heatmap}.")
+        
+        # Sort by most important metric (expected profit, ROAS, or ad_spend)
+        if 'expected_profit' in clustering_data.columns:
+            sort_metric = 'expected_profit'
+        elif 'ad_roas' in clustering_data.columns:
+            sort_metric = 'ad_roas'
+        else:
+            sort_metric = 'ad_spend'
+            
+        top_keywords = clustering_data.sort_values(sort_metric, ascending=False)['keyword'].head(max_keywords_in_heatmap).tolist()
+        keyword_corr = keyword_corr.loc[top_keywords, top_keywords]
+    
+    # Create heatmap
+    plt.figure(figsize=(12, 10))
+    
+    # Use a diverging colormap to better show positive/negative correlations
+    cmap = plt.cm.RdBu_r
+    
+    # Create mask to not repeat the upper triangle
+    mask = np.zeros_like(keyword_corr, dtype=bool)
+    mask[np.triu_indices_from(mask, k=1)] = True
+    
+    # Plot the heatmap
+    sns.heatmap(keyword_corr, mask=mask, cmap=cmap, vmax=1, vmin=-1, center=0,
+                square=True, linewidths=.5, cbar_kws={"shrink": .7},
+                annot=True, fmt=".2f", annot_kws={"size": 8})
+    
+    # Adjust labels for readability
+    plt.title('Keyword Similarity Map', fontsize=16)
+    plt.xticks(rotation=45, ha='right', fontsize=10)
+    plt.yticks(fontsize=10)
+    
+    # Tight layout
+    plt.tight_layout()
+    
+    # Save the visualization
+    keyword_corr_path = os.path.join(output_dir, "keyword_similarity_map.png")
+    plt.savefig(keyword_corr_path, dpi=100, bbox_inches="tight")
+    plt.close()
+    
+    saved_plots.append(keyword_corr_path)
+    print(f"Keyword similarity map saved to {keyword_corr_path}")
+    
+    # 2. Create a PCA plot to visualize keyword clusters
+    
+    # Normalize data for PCA (important to prevent metrics with larger scales from dominating)
+    X = clustering_data[business_metrics].copy()
+    for col in X.columns:
+        X[col] = (X[col] - X[col].mean()) / X[col].std()
+    
+    # Apply PCA to reduce to 2 dimensions
+    from sklearn.decomposition import PCA
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X)
+    
+    # Create a DataFrame with PCA results
+    pca_df = pd.DataFrame({
+        'keyword': clustering_data['keyword'],
+        'PC1': X_pca[:, 0],
+        'PC2': X_pca[:, 1]
+    })
+    
+    # Add the most important business metrics back for coloring points
+    for metric in ['ad_roas', 'ad_spend', 'expected_profit', 'conversion_rate']:
+        if metric in clustering_data.columns:
+            pca_df[metric] = clustering_data[metric]
+    
+    # Determine the best metric to color by (prioritizing the most business-relevant)
+    if 'expected_profit' in pca_df.columns:
+        color_metric = 'expected_profit'
+        color_title = 'Expected Profit'
+    elif 'ad_roas' in pca_df.columns:
+        color_metric = 'ad_roas'
+        color_title = 'ROAS'
+    else:
+        color_metric = 'ad_spend'
+        color_title = 'Ad Spend'
+    
+    # Create the PCA plot
+    plt.figure(figsize=(14, 10))
+    
+    # Calculate explained variance for axis labels
+    explained_var = pca.explained_variance_ratio_ * 100
+    
+    # Use a colorful scatter plot
+    scatter = plt.scatter(
+        pca_df['PC1'], 
+        pca_df['PC2'],
+        c=pca_df[color_metric], 
+        cmap='viridis',
+        s=100,  # Larger points for visibility
+        alpha=0.7,
+        edgecolors='k',
+        linewidths=1
+    )
+    
+    # Add a colorbar
+    cbar = plt.colorbar(scatter)
+    cbar.set_label(color_title, fontsize=12)
+    
+    # Add labels for easier identification (but avoid overlapping)
+    from adjustText import adjust_text
+    
+    # Only label a manageable number of points to avoid clutter
+    MAX_LABELS = 20
+    if len(pca_df) > MAX_LABELS:
+        # If we have too many keywords, only label the top ones by the color metric
+        top_indices = pca_df[color_metric].abs().nlargest(MAX_LABELS).index
+        label_df = pca_df.loc[top_indices]
+    else:
+        label_df = pca_df
+    
+    texts = []
+    for i, row in label_df.iterrows():
+        texts.append(plt.text(row['PC1'], row['PC2'], row['keyword'], fontsize=9))
+    
+    # Try to adjust text positions to minimize overlap
+    try:
+        adjust_text(
+            texts,
+            arrowprops=dict(arrowstyle='->', color='black', lw=0.5, shrinkA=5),  # Increased shrinkA value
+            expand_points=(1.5, 1.5)
+        )
+    except Exception as e:
+        # More detailed error handling
+        print(f"Warning: Adjusting text labels had an issue: {str(e)}")
+        print("Some labels may overlap, but the visualization is still valid.")
+
+    
+    # Add title and labels
+    plt.title('Keyword Investment Landscape', fontsize=16)
+    plt.xlabel(f'Principal Component 1 ({explained_var[0]:.1f}% Variance)', fontsize=12)
+    plt.ylabel(f'Principal Component 2 ({explained_var[1]:.1f}% Variance)', fontsize=12)
+    plt.grid(alpha=0.3)
+    
+    # Add explanatory annotations for executives
+    plt.annotate(
+        "Keywords grouped together\nbehave similarly across metrics",
+        xy=(0.05, 0.95),
+        xycoords='axes fraction',
+        bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="gray", alpha=0.8),
+        fontsize=10
+    )
+    
+    # Add interpretation guide based on color metric
+    if color_metric == 'expected_profit' or color_metric == 'ad_roas':
+        plt.annotate(
+            f"Darker colors indicate higher {color_title}\n(better investment candidates)",
+            xy=(0.05, 0.05),
+            xycoords='axes fraction',
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="gray", alpha=0.8),
+            fontsize=10
+        )
+    else:
+        plt.annotate(
+            f"Darker colors indicate higher {color_title}",
+            xy=(0.05, 0.05),
+            xycoords='axes fraction',
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="gray", alpha=0.8),
+            fontsize=10
+        )
+    
+    # Save the visualization
+    pca_path = os.path.join(output_dir, "keyword_investment_landscape.png")
+    plt.savefig(pca_path, dpi=100, bbox_inches="tight")
+    plt.close()
+    
+    saved_plots.append(pca_path)
+    print(f"Keyword investment landscape saved to {pca_path}")
+    
+    # 3. Create a quadrant analysis (if we have the right metrics)
+    if 'ad_roas' in clustering_data.columns and 'ad_spend' in clustering_data.columns:
+        # Create a quadrant analysis plot (ROAS vs Spend)
+        plt.figure(figsize=(12, 10))
+        
+        # Determine breakpoints for quadrants (using median or 1.0 for ROAS)
+        roas_threshold = max(clustering_data['ad_roas'].median(), 1.0)  # At least breakeven
+        spend_threshold = clustering_data['ad_spend'].median()
+        
+        # Create the scatter plot
+        scatter = plt.scatter(
+            clustering_data['ad_spend'],
+            clustering_data['ad_roas'],
+            c=clustering_data['ad_roas'] * clustering_data['ad_spend'],  # Color by total return
+            cmap='viridis',
+            s=100,
+            alpha=0.7,
+            edgecolors='k',
+            linewidths=1
+        )
+        
+        # Add reference lines for quadrants
+        plt.axvline(x=spend_threshold, color='gray', linestyle='--', alpha=0.7)
+        plt.axhline(y=roas_threshold, color='gray', linestyle='--', alpha=0.7)
+        
+        # Add colorbar
+        cbar = plt.colorbar(scatter)
+        cbar.set_label('Total Return (ROAS × Spend)', fontsize=12)
+        
+        # Add labels for easier identification
+        texts = []
+        for i, row in clustering_data.iterrows():
+            texts.append(plt.text(row['ad_spend'], row['ad_roas'], row['keyword'], fontsize=9))
+        
+        # Try to adjust text positions to minimize overlap
+        try:
+            adjust_text(
+                texts,
+                arrowprops=dict(arrowstyle='->', color='black', lw=0.5),
+                expand_points=(1.5, 1.5)
+            )
+        except:
+            print("Warning: Could not adjust text labels for clarity. Some labels may overlap.")
+        
+        # Add quadrant labels/explanations
+        plt.annotate(
+            "HIGH VALUE\nHigh ROAS, Low Spend\n→ Increase Budget",
+            xy=(spend_threshold * 0.1, roas_threshold * 1.1),
+            xycoords='data',
+            bbox=dict(boxstyle="round,pad=0.5", fc="#90EE90", ec="green", alpha=0.7),
+            fontsize=10
+        )
+        
+        plt.annotate(
+            "STAR PERFORMERS\nHigh ROAS, High Spend\n→ Maintain/Optimize",
+            xy=(spend_threshold * 1.1, roas_threshold * 1.1),
+            xycoords='data',
+            bbox=dict(boxstyle="round,pad=0.5", fc="#ADD8E6", ec="blue", alpha=0.7),
+            fontsize=10
+        )
+        
+        plt.annotate(
+            "POOR PERFORMERS\nLow ROAS, Low Spend\n→ Test or Cut",
+            xy=(spend_threshold * 0.1, roas_threshold * 0.5),
+            xycoords='data',
+            bbox=dict(boxstyle="round,pad=0.5", fc="#FFCCCB", ec="red", alpha=0.7),
+            fontsize=10
+        )
+        
+        plt.annotate(
+            "REVIEW & OPTIMIZE\nLow ROAS, High Spend\n→ Reduce or Improve",
+            xy=(spend_threshold * 1.1, roas_threshold * 0.5),
+            xycoords='data',
+            bbox=dict(boxstyle="round,pad=0.5", fc="#FFD700", ec="orange", alpha=0.7),
+            fontsize=10
+        )
+        
+        # Add title and labels
+        plt.title('Keyword Investment Decision Quadrant', fontsize=16)
+        plt.xlabel('Ad Spend', fontsize=12)
+        plt.ylabel('Return on Ad Spend (ROAS)', fontsize=12)
+        plt.grid(alpha=0.3)
+        
+        # Add breakeven line
+        plt.axhline(y=1.0, color='red', linestyle='-', alpha=0.5, label='Breakeven (ROAS=1.0)')
+        plt.legend()
+        
+        # Save the visualization
+        quadrant_path = os.path.join(output_dir, "keyword_investment_quadrant.png")
+        plt.savefig(quadrant_path, dpi=100, bbox_inches="tight")
+        plt.close()
+        
+        saved_plots.append(quadrant_path)
+        print(f"Keyword investment quadrant saved to {quadrant_path}")
+    
+    return saved_plots
 
 def visualize_reward_function(dataset, output_dir):
     """
@@ -621,6 +872,162 @@ def visualize_reward_function(dataset, output_dir):
     
     saved_plots.append(decision_plot_path)
     print(f"Decision boundaries plot saved to {decision_plot_path}")
+    
+    return saved_plots
+
+
+def visualize_feature_correlation_matrix(dataset, output_dir):
+    """
+    Create a correlation heatmap of the feature columns.
+    
+    Args:
+        dataset (pd.DataFrame): Dataset containing keyword metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
+    """
+    print(f"Generating feature correlation matrix visualization...")
+    os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
+    
+    # Calculate correlation matrix
+    corr = dataset[feature_columns].corr()
+    
+    # Create figure with constrained dimensions
+    plt.figure(figsize=(14, 12), dpi=100)
+    
+    # Create heatmap with custom colormap for better visualization
+    cmap = plt.cm.RdBu_r
+    mask = np.zeros_like(corr, dtype=bool)
+    mask[np.triu_indices_from(mask, k=1)] = False  # Only show lower triangle
+    
+    # Plot the heatmap
+    sns.heatmap(corr, mask=mask, cmap=cmap, vmax=1, vmin=-1, center=0,
+                square=True, linewidths=.5, cbar_kws={"shrink": .7},
+                annot=True, fmt=".2f", annot_kws={"size": 8})
+    
+    # Configure labels and title
+    plt.title('Feature Correlation Matrix', fontsize=16, pad=20)
+    plt.xticks(rotation=45, ha='right', fontsize=10)
+    plt.yticks(fontsize=10)
+    
+    # Tighten layout
+    plt.tight_layout()
+    
+    # Save the plot with constrained DPI
+    corr_plot_path = os.path.join(output_dir, "feature_correlation_matrix.png")
+    plt.savefig(corr_plot_path, dpi=100, bbox_inches="tight")
+    plt.close()
+    
+    saved_plots.append(corr_plot_path)
+    print(f"Feature correlation matrix saved to {corr_plot_path}")
+    
+    return saved_plots
+
+
+def visualize_budget_allocation_strategy(dataset, output_dir):
+    """
+    Create visualizations focused on the budget allocation strategy.
+    
+    Args:
+        dataset (pd.DataFrame): Dataset containing keyword metrics
+        output_dir (str): Directory to save visualizations
+        
+    Returns:
+        list: Paths to saved visualization files
+    """
+    print(f"Generating budget allocation strategy visualization...")
+    os.makedirs(output_dir, exist_ok=True)
+    saved_plots = []
+    
+    # Create cash management simulation visualization
+    plt.figure(figsize=(12, 8), dpi=100)
+    
+    # Implement budget allocation simulation with temporal dynamics
+    initial_cash = 100000
+    cash_levels = [initial_cash]
+    revenues = [0]
+    expenses = [0]
+    roas_values = []
+    steps = list(range(30))  # Simulate 30 steps
+    
+    np.random.seed(42)  # For reproducibility
+    
+    for step in range(1, 30):
+        # Get previous cash level
+        prev_cash = cash_levels[-1]
+        
+        # Implement 10% budget allocation constraint
+        budget = prev_cash * 0.1
+        
+        # Simulate ROAS with temporal learning improvements
+        step_factor = min(1.0, step / 20)
+        base_roas = 1.0 + step_factor * 1.5
+        roas = max(0.5, np.random.normal(base_roas, 0.3))
+        roas_values.append(roas)
+        
+        # Calculate revenue with stochastic returns
+        revenue = budget * roas
+        revenues.append(revenue)
+        expenses.append(budget)
+        
+        # Update cash position
+        new_cash = prev_cash - budget + revenue
+        cash_levels.append(new_cash)
+    
+    # Create multi-axis visualization with synchronized temporal representation
+    fig, ax1 = plt.subplots(figsize=(12, 8))
+    
+    # Plot cash balance trajectory
+    ax1.plot(steps, cash_levels, 'b-', linewidth=2.5, label='Cash Balance')
+    ax1.set_xlabel('Simulation Steps', fontsize=12)
+    ax1.set_ylabel('Cash Balance', fontsize=12, color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+    
+    # Implement revenue/expense visualization on secondary axis
+    ax2 = ax1.twinx()
+    
+    # Plot revenue and expenses with differentiated representation
+    bar_width = 0.35
+    revenue_bars = ax2.bar([x + bar_width/2 for x in steps[1:]], revenues[1:], 
+                          bar_width, alpha=0.5, color='green', label='Revenue')
+    expense_bars = ax2.bar([x - bar_width/2 for x in steps[1:]], [-e for e in expenses[1:]], 
+                          bar_width, alpha=0.5, color='red', label='Ad Spend')
+    
+    # Implement ROAS temporal trajectory visualization
+    ax3 = ax1.twinx()
+    ax3.spines["right"].set_position(("axes", 1.15))  # Offset the right spine
+    roas_line, = ax3.plot(steps[1:], roas_values, 'r--', linewidth=1.5, label='ROAS')
+    ax3.set_ylabel('ROAS', fontsize=12, color='red')
+    ax3.tick_params(axis='y', labelcolor='red')
+    
+    # Construct integrated legend with multi-axis components
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    lines3, labels3 = ax3.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2 + lines3, labels1 + labels2 + labels3, loc='upper left')
+    
+    # Implement explanatory annotation for budget constraint mechanism
+    plt.annotate('10% Budget Allocation Policy\nManages Risk While Optimizing Returns', 
+                xy=(15, cash_levels[15]), xytext=(20, cash_levels[15] * 0.8),
+                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=8, alpha=0.7),
+                fontsize=10, ha='center', va='center',
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
+    
+    plt.title('Cash Management: 10% Budget Allocation per Step', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Apply dimensional constraints
+    fig.subplots_adjust(top=0.9, bottom=0.1, left=0.1, right=0.85)
+    
+    # Generate image artifact
+    cash_plot_path = os.path.join(output_dir, "cash_management_simulation.png")
+    plt.savefig(cash_plot_path, dpi=100)
+    plt.close()
+    
+    saved_plots.append(cash_plot_path)
+    print(f"Cash management simulation plot saved to {cash_plot_path}")
     
     return saved_plots
 
@@ -891,320 +1298,6 @@ def visualize_experience_replay_target_network(output_dir):
     
     return saved_plots
 
-def visualize_budget_allocation_strategy(dataset, output_dir):
-    """
-    Create visualizations focused on the budget allocation strategy.
-    
-    Args:
-        dataset (pd.DataFrame): Dataset containing keyword metrics
-        output_dir (str): Directory to save visualizations
-        
-    Returns:
-        list: Paths to saved visualization files
-    """
-    print(f"Generating budget allocation strategy visualization...")
-    os.makedirs(output_dir, exist_ok=True)
-    saved_plots = []
-    
-    # Create figure for ROAS vs Ad Spend visualization with dimensional constraints
-    plt.figure(figsize=(12, 8), dpi=100)
-    
-    # Calculate investment decision based on ROAS thresholds and CTR modulation
-    dataset['selected'] = (
-        (dataset['ad_roas'] > 2.0) | 
-        ((dataset['ad_roas'] > 1.2) & (dataset['ad_roas'] <= 2.0)) |
-        ((dataset['ad_roas'] > 1.0) & (dataset['ad_roas'] <= 1.2) & (dataset['paid_ctr'] > 0.18))
-    )
-    
-    # Define color map based on selection decision for visual differentiation
-    selection_colors = dataset['selected'].map({True: 'green', False: 'red'})
-    
-    # Implement multidimensional visualization with competitiveness modulation
-    plt.scatter(
-        dataset['ad_spend'], 
-        dataset['ad_roas'],
-        c=dataset['competitiveness'],
-        cmap='viridis',
-        s=50,
-        alpha=0.7,
-        edgecolor=selection_colors
-    )
-    
-    # Add colorbar for competitiveness dimension
-    cbar = plt.colorbar()
-    cbar.set_label('Keyword Competitiveness')
-    
-    # Add reference line for breakeven ROAS
-    plt.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Breakeven ROAS')
-    
-    # Create custom legend for selection status
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='w', markeredgecolor='green', 
-              markersize=10, label='Selected Keywords'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='w', markeredgecolor='red', 
-              markersize=10, label='Rejected Keywords')
-    ]
-    plt.legend(handles=legend_elements + [Line2D([0], [0], color='red', linestyle='--', label='Breakeven ROAS')], 
-              loc='upper right')
-    
-    # Configure axes
-    plt.xlabel('Ad Spend', fontsize=12)
-    plt.ylabel('Return on Ad Spend (ROAS)', fontsize=12)
-    plt.title('ROAS vs Ad Spend: Investment Decision Strategy', fontsize=14)
-    plt.grid(True, alpha=0.3)
-    
-    # Apply dimensional constraints
-    plt.subplots_adjust(top=0.9, bottom=0.1, left=0.1, right=0.9)
-    
-    # Generate image artifact
-    roas_plot_path = os.path.join(output_dir, "roas_vs_spend.png")
-    plt.savefig(roas_plot_path, dpi=100)
-    plt.close()
-    
-    saved_plots.append(roas_plot_path)
-    print(f"ROAS vs Spend plot saved to {roas_plot_path}")
-    
-    # Create cash management simulation visualization
-    plt.figure(figsize=(12, 8), dpi=100)
-    
-    # Implement budget allocation simulation with temporal dynamics
-    initial_cash = 100000
-    cash_levels = [initial_cash]
-    revenues = [0]
-    expenses = [0]
-    roas_values = []
-    steps = list(range(30))  # Simulate 30 steps
-    
-    np.random.seed(42)  # For reproducibility
-    
-    for step in range(1, 30):
-        # Get previous cash level
-        prev_cash = cash_levels[-1]
-        
-        # Implement 10% budget allocation constraint
-        budget = prev_cash * 0.1
-        
-        # Simulate ROAS with temporal learning improvements
-        step_factor = min(1.0, step / 20)
-        base_roas = 1.0 + step_factor * 1.5
-        roas = max(0.5, np.random.normal(base_roas, 0.3))
-        roas_values.append(roas)
-        
-        # Calculate revenue with stochastic returns
-        revenue = budget * roas
-        revenues.append(revenue)
-        expenses.append(budget)
-        
-        # Update cash position
-        new_cash = prev_cash - budget + revenue
-        cash_levels.append(new_cash)
-    
-    # Create multi-axis visualization with synchronized temporal representation
-    fig, ax1 = plt.subplots(figsize=(12, 8))
-    
-    # Plot cash balance trajectory
-    ax1.plot(steps, cash_levels, 'b-', linewidth=2.5, label='Cash Balance')
-    ax1.set_xlabel('Simulation Steps', fontsize=12)
-    ax1.set_ylabel('Cash Balance', fontsize=12, color='blue')
-    ax1.tick_params(axis='y', labelcolor='blue')
-    
-    # Implement revenue/expense visualization on secondary axis
-    ax2 = ax1.twinx()
-    
-    # Plot revenue and expenses with differentiated representation
-    bar_width = 0.35
-    revenue_bars = ax2.bar([x + bar_width/2 for x in steps[1:]], revenues[1:], 
-                          bar_width, alpha=0.5, color='green', label='Revenue')
-    expense_bars = ax2.bar([x - bar_width/2 for x in steps[1:]], [-e for e in expenses[1:]], 
-                          bar_width, alpha=0.5, color='red', label='Ad Spend')
-    
-    # Implement ROAS temporal trajectory visualization
-    ax3 = ax1.twinx()
-    ax3.spines["right"].set_position(("axes", 1.15))  # Offset the right spine
-    roas_line, = ax3.plot(steps[1:], roas_values, 'r--', linewidth=1.5, label='ROAS')
-    ax3.set_ylabel('ROAS', fontsize=12, color='red')
-    ax3.tick_params(axis='y', labelcolor='red')
-    
-    # Construct integrated legend with multi-axis components
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    lines3, labels3 = ax3.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2 + lines3, labels1 + labels2 + labels3, loc='upper left')
-    
-    # Implement explanatory annotation for budget constraint mechanism
-    plt.annotate('10% Budget Allocation Policy\nManages Risk While Optimizing Returns', 
-                xy=(15, cash_levels[15]), xytext=(20, cash_levels[15] * 0.8),
-                arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=8, alpha=0.7),
-                fontsize=10, ha='center', va='center',
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
-    
-    plt.title('Cash Management: 10% Budget Allocation per Step', fontsize=14)
-    plt.grid(True, alpha=0.3)
-    
-    # Apply dimensional constraints
-    fig.subplots_adjust(top=0.9, bottom=0.1, left=0.1, right=0.85)
-    
-    # Generate image artifact
-    cash_plot_path = os.path.join(output_dir, "cash_management_simulation.png")
-    plt.savefig(cash_plot_path, dpi=100)
-    plt.close()
-    
-    saved_plots.append(cash_plot_path)
-    print(f"Cash management simulation plot saved to {cash_plot_path}")
-    
-    # Generate ROAS group analysis visualization
-    plt.figure(figsize=(10, 6), dpi=100)
-    
-    # Define ROAS classification taxonomy
-    def get_roas_group(row):
-        if row['ad_roas'] > 2.0:
-            return "High ROAS (>2.0)"
-        elif row['ad_roas'] > 1.2:
-            return "Medium ROAS (1.2-2.0)"
-        elif row['ad_roas'] > 1.0:
-            return "Marginal ROAS (1.0-1.2)"
-        else:
-            return "Unprofitable (<1.0)"
-    
-    dataset['roas_group'] = dataset.apply(get_roas_group, axis=1)
-    
-    # Group by ROAS category and calculate selection rates with multidimensional aggregation
-    roas_groups = dataset.groupby('roas_group').agg({
-        'keyword': 'count',
-        'selected': 'mean',
-        'ad_roas': 'mean',
-        'ad_spend': 'mean',
-        'paid_ctr': 'mean'
-    }).reset_index()
-    
-    roas_groups.rename(columns={
-        'keyword': 'count',
-        'selected': 'selection_rate',
-        'ad_roas': 'avg_roas',
-        'ad_spend': 'avg_spend',
-        'paid_ctr': 'avg_ctr'
-    }, inplace=True)
-    
-    # Ensure complete taxonomic representation
-    all_groups = ["High ROAS (>2.0)", "Medium ROAS (1.2-2.0)", "Marginal ROAS (1.0-1.2)", "Unprofitable (<1.0)"]
-    for group in all_groups:
-        if group not in roas_groups['roas_group'].values:
-            roas_groups = pd.concat([roas_groups, pd.DataFrame([{
-                'roas_group': group,
-                'count': 0,
-                'selection_rate': 0,
-                'avg_roas': 0,
-                'avg_spend': 0,
-                'avg_ctr': 0
-            }])], ignore_index=True)
-    
-    # Implement ordered representation
-    roas_groups['order'] = roas_groups['roas_group'].map({
-        "High ROAS (>2.0)": 0,
-        "Medium ROAS (1.2-2.0)": 1,
-        "Marginal ROAS (1.0-1.2)": 2,
-        "Unprofitable (<1.0)": 3
-    })
-    roas_groups = roas_groups.sort_values('order').reset_index(drop=True)
-    
-    # Convert selection rate to percentage for interpretability
-    roas_groups['selection_rate'] = roas_groups['selection_rate'] * 100
-    
-    # Implement bar visualization with color modulation based on selection rate
-    bars = plt.bar(roas_groups['roas_group'], roas_groups['selection_rate'], color='skyblue')
-    
-    # Color bars based on selection rate with gradient visualization
-    cmap = plt.cm.RdYlGn
-    for i, bar in enumerate(bars):
-        bar.set_color(cmap(roas_groups['selection_rate'].iloc[i] / 100))
-    
-    # Add annotation layers for count and rate metrics
-    for i, row in roas_groups.iterrows():
-        plt.text(i, 5, f"n = {int(row['count'])}", ha='center', va='center', color='black', fontweight='bold')
-        plt.text(i, row['selection_rate'] + 3, f"{row['selection_rate']:.1f}%", ha='center', va='bottom')
-    
-    # Configure axes
-    plt.xlabel('ROAS Group', fontsize=12)
-    plt.ylabel('Selection Rate (%)', fontsize=12)
-    plt.title('Keyword Selection Strategy by ROAS Group', fontsize=14)
-    plt.ylim(0, 105)
-    plt.grid(True, alpha=0.3, axis='y')
-    
-    # Add ROAS average as contextual subtext
-    for i, row in roas_groups.iterrows():
-        if row['avg_roas'] > 0:
-            plt.text(i, -5, f"Avg ROAS: {row['avg_roas']:.2f}", ha='center', va='top', fontsize=9)
-    
-    # Apply dimensional constraints
-    plt.subplots_adjust(top=0.9, bottom=0.15, left=0.1, right=0.9)
-    
-    # Generate image artifact
-    group_plot_path = os.path.join(output_dir, "roas_group_analysis.png")
-    plt.savefig(group_plot_path, dpi=100)
-    plt.close()
-    
-    saved_plots.append(group_plot_path)
-    print(f"ROAS group analysis plot saved to {group_plot_path}")
-    
-    # Generate portfolio performance visualization
-    plt.figure(figsize=(10, 8), dpi=100)
-    
-    # Calculate portfolio metrics with selection-based aggregation
-    selected_df = dataset[dataset['selected']]
-    
-    total_spend = selected_df['ad_spend'].sum()
-    total_value = (selected_df['ad_roas'] * selected_df['ad_spend']).sum()
-    portfolio_roas = total_value / total_spend if total_spend > 0 else 0
-    
-    # Implement pie chart visualization for distribution analysis
-    labels = ['Ad Spend', 'Return']
-    sizes = [total_spend, total_value - total_spend]
-    colors = ['#ff9999', '#99ff99']
-    explode = (0, 0.1)
-    
-    # Only visualize with valid data
-    if sum(sizes) > 0:
-        plt.pie(sizes, explode=explode, labels=labels, colors=colors,
-                autopct='%1.1f%%', shadow=True, startangle=90)
-    
-    # Add portfolio metrics table for comprehensive representation
-    table_data = [
-        ['Metric', 'Value'],
-        ['Selected Keywords', f"{len(selected_df)} / {len(dataset)} ({len(selected_df)/len(dataset)*100:.1f}%)"],
-        ['Total Ad Spend', f"${total_spend:,.2f}"],
-        ['Total Revenue', f"${total_value:,.2f}"],
-        ['Portfolio ROAS', f"{portfolio_roas:.2f}"],
-        ['Profit', f"${total_value - total_spend:,.2f}"]
-    ]
-    
-    plt.table(cellText=table_data, loc='center', bbox=[0.25, -0.5, 0.5, 0.3], cellLoc='center')
-    
-    plt.title('Portfolio Performance Analysis', fontsize=14)
-    plt.axis('equal')  # Equal aspect ratio for circular representation
-    
-    # Add strategy explanation for interpretability
-    plt.text(0.5, -0.7, 
-            "Portfolio optimization strategies:\n"
-            "1. Risk-managed budget allocation (10% constraint)\n"
-            "2. ROAS-prioritized selection hierarchy\n"
-            "3. CTR-modulated marginal investment decisions", 
-            ha='center', va='center', fontsize=10,
-            bbox=dict(boxstyle="round,pad=0.3", fc="#f0f0f0", ec="gray", alpha=0.8))
-    
-    # Apply dimensional constraints
-    plt.subplots_adjust(top=0.9, bottom=-0.2, left=0.1, right=0.9)
-    
-    # Generate image artifact
-    portfolio_plot_path = os.path.join(output_dir, "portfolio_performance.png")
-    plt.savefig(portfolio_plot_path, dpi=100)
-    plt.close()
-    
-    saved_plots.append(portfolio_plot_path)
-    print(f"Portfolio performance plot saved to {portfolio_plot_path}")
-    
-    return saved_plots
-
 def create_html_report(plots, output_dir, params=None):
     """
     Create an HTML report with all visualizations.
@@ -1281,12 +1374,34 @@ def create_html_report(plots, output_dir, params=None):
     <body>
         <h1>Digital Advertising RL Optimization Analysis</h1>
     """
-    
-    # Add sections for each type of visualization
+
+    # Add sections for each type of visualization with descriptions
+    section_descriptions = {
+        "Exploration Strategy": "These visualizations illustrate how the epsilon-greedy strategy balances exploration and exploitation during training. Initially, the agent explores more frequently to discover the environment, gradually shifting toward exploitation of known profitable keywords.",
+        
+        "Reward Function Design": "The reward function is critical for guiding the agent toward optimal policy. These plots show how the reward is computed based on ROAS, with adjustments for opportunity cost and variance reduction techniques.",
+        
+        "Decision Boundaries": "These visualizations show the decision boundaries learned by the RL agent, particularly focusing on the relationship between ROAS and CTR when making keyword bidding decisions.",
+        
+        "Stability Mechanisms": "Experience replay and target networks are key stability mechanisms in deep RL. These diagrams illustrate how they prevent catastrophic forgetting and reduce training variance.",
+        
+        "Budget Allocation": "These visualizations demonstrate the 10% budget allocation strategy, which balances risk management with return optimization in the advertising context.",
+        
+        "Feature Analysis": "The correlation matrix provides insights into relationships between different advertising metrics, helping to understand the feature space the agent operates in."
+    }
+
     for section_name, section_plots in plots.items():
+        if section_name in section_descriptions:
+            description = section_descriptions[section_name]
+        else:
+            description = f"Visualizations related to {section_name.lower()}."
+            
         html += f"""
         <div class="section">
             <h2>{section_name}</h2>
+            <div class="description">
+                <p>{description}</p>
+            </div>
         """
         
         for plot_path in section_plots:
@@ -1306,20 +1421,38 @@ def create_html_report(plots, output_dir, params=None):
         html += """
         </div>
         """
-    
+
+    # Add a summary section
+    html += """
+    <div class="section">
+        <h2>Summary</h2>
+        <div class="description">
+            <p>The visualizations in this report demonstrate the effectiveness of reinforcement learning for digital advertising optimization. 
+            Key components include:</p>
+            <ul>
+                <li>Epsilon-greedy exploration strategy that balances exploration and exploitation</li>
+                <li>A reward function design optimized for ROAS with opportunity cost consideration</li>
+                <li>Experience replay and target networks that stabilize training</li>
+                <li>A risk-managed budget allocation strategy</li>
+                <li>Decision boundaries that incorporate both ROAS and engagement metrics</li>
+            </ul>
+            <p>Together, these components create a robust system for maximizing advertising effectiveness while managing budgets efficiently.</p>
+        </div>
+    </div>
+    """
+
     # Close HTML document
     html += """
     </body>
     </html>
     """
-    
+
     # Write HTML to file
     with open(report_path, 'w') as f:
         f.write(html)
-    
+
     print(f"HTML report generated at {report_path}")
     return report_path
-
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize RL Optimization of Digital Advertising")
@@ -1348,13 +1481,21 @@ def main():
         print("Proceeding with dataset analysis only.")
         metric_dfs = {}
     
-    # Load or generate dataset
+    # Load dataset
     try:
-        if args.dataset and os.path.exists(args.dataset):
+        # First try to load from the same path that digital_advertising.py uses
+        default_dataset_path = 'data/organized_dataset.csv'
+        
+        if os.path.exists(default_dataset_path):
+            print(f"Loading dataset from {default_dataset_path}")
+            dataset = pd.read_csv(default_dataset_path)
+        elif args.dataset and os.path.exists(args.dataset):
             print(f"Loading dataset from {args.dataset}")
             dataset = pd.read_csv(args.dataset)
         else:
+            print(f"Warning: Neither {default_dataset_path} nor {args.dataset} exist.")
             print(f"Generating synthetic dataset with {args.num_samples} samples")
+            print(f"Note: This is not recommended for analysis of actual training results.")
             dataset = generate_synthetic_data(args.num_samples)
             dataset_path = os.path.join(args.output_dir, "synthetic_ad_data.csv")
             dataset.to_csv(dataset_path, index=False)
@@ -1364,20 +1505,20 @@ def main():
         print(f"Error details: {traceback.format_exc()}")
         print("Generating emergency synthetic dataset")
         dataset = generate_synthetic_data(100)  # Smaller emergency dataset
-    
+
     # Generate visualizations
     all_plots = {}
     
     # 1. Epsilon-Greedy Exploration
     try:
-        all_plots["Epsilon-Greedy Exploration Strategy"] = visualize_epsilon_greedy_exploration(
+        all_plots["Exploration Strategy"] = visualize_epsilon_greedy_exploration(
             metric_dfs, 
             os.path.join(args.output_dir, "exploration_strategy")
         )
     except Exception as e:
         print(f"Warning: Error visualizing epsilon-greedy exploration: {e}")
         print(f"Error details: {traceback.format_exc()}")
-        all_plots["Epsilon-Greedy Exploration Strategy"] = []
+        all_plots["Exploration Strategy"] = []
     
     # 2. Reward Function Design
     try:
@@ -1392,25 +1533,47 @@ def main():
     
     # 3. Experience Replay and Target Network
     try:
-        all_plots["Experience Replay & Target Network"] = visualize_experience_replay_target_network(
+        all_plots["Stability Mechanisms"] = visualize_experience_replay_target_network(
             os.path.join(args.output_dir, "experience_replay")
         )
     except Exception as e:
         print(f"Warning: Error visualizing experience replay: {e}")
         print(f"Error details: {traceback.format_exc()}")
-        all_plots["Experience Replay & Target Network"] = []
+        all_plots["Stability Mechanisms"] = []
     
     # 4. Budget Allocation Strategy
     try:
-        all_plots["Budget Allocation Strategy"] = visualize_budget_allocation_strategy(
+        all_plots["Budget Allocation"] = visualize_budget_allocation_strategy(
             dataset,
             os.path.join(args.output_dir, "budget_strategy")
         )
     except Exception as e:
         print(f"Warning: Error visualizing budget allocation: {e}")
         print(f"Error details: {traceback.format_exc()}")
-        all_plots["Budget Allocation Strategy"] = []
+        all_plots["Budget Allocation"] = []
     
+    # 5. Feature Correlation Matrix
+    try:
+        all_plots["Feature Analysis"] = visualize_feature_correlation_matrix(
+            dataset,
+            os.path.join(args.output_dir, "feature_analysis")
+        )
+    except Exception as e:
+        print(f"Warning: Error visualizing feature correlations: {e}")
+        print(f"Error details: {traceback.format_exc()}")
+        all_plots["Feature Analysis"] = []
+    
+    # 6. Keyword Clustering for Executive Decision Making
+    try:
+        all_plots["Keyword Investment Analysis"] = visualize_keyword_clustering(
+            dataset,
+            os.path.join(args.output_dir, "keyword_investment")
+        )
+    except Exception as e:
+        print(f"Warning: Error visualizing keyword clustering: {e}")
+        print(f"Error details: {traceback.format_exc()}")
+        all_plots["Keyword Investment Analysis"] = []
+
     # Create HTML report with all visualizations
     try:
         html_report_path = create_html_report(all_plots, args.output_dir)
@@ -1422,10 +1585,10 @@ def main():
     
     print(f"All visualizations saved to {args.output_dir}")
 
-
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
         print(f"Critical error in main execution: {e}")
         print(f"Error details: {traceback.format_exc()}")
+
