@@ -367,11 +367,11 @@ class AdOptimizationEnv(EnvBase):
 
     def _compute_reward(self, action, current_pki, action_idx, ad_roas):
         """Compute reward based on the selected keyword's metrics"""
-        adjusted_reward = 0 if action_idx < self.num_keywords else 1
-        if ad_roas > 0:
-            adjusted_reward = np.log(ad_roas)
+        adjusted_reward = 0 if action_idx < self.num_keywords else 1 # encourage the agent to buy something​
+        if ad_roas > 0: # log(0) is undefined
+            adjusted_reward = np.log(ad_roas)  ## Adjust reward based on ad_roas performance, scale it with log
         missing_rewards = []
-        # Iterate through all keywords
+        # Calculate the ad_roas we did not get because we chose another keyword​
         for i in range(self.num_keywords):
             sample = current_pki.iloc[i]
             if action[i] == False:
