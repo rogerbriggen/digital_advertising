@@ -165,7 +165,7 @@ python tensorboard-analyzer.py --logdir runs --output_dir training_analysis
 - `--logdir`: Directory containing TensorBoard logs (default: "runs")
 - `--output_dir`: Directory to save analysis results (default: "training_analysis")
 
-### 5. Interactive Data Explorer (`analyze_raw_data.py`)
+### 5. Interactive Raw Data Explorer (`analyze_raw_data.py`)
 
 Provides an interactive Dash web application for exploring the raw advertising data and visualizing trends.
 
