@@ -57,7 +57,7 @@ This script implements the core reinforcement learning environment and training 
 
 ####  1.1 Core RL Training (`digital_advertisingIntelMac.py`)
 
-This script is almost the same as digital_advertising.py there are only minor differences in the import because Intel mac does not support the same versions
+This script is almost the same as digital_advertising.py there are only minor differences in the import because Intel mac does not support the same versions.
 
 **Key Features:**
 
