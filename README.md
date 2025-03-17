@@ -41,7 +41,7 @@ cd digital_advertising
 conda env create -f environment.yml
 conda activate torchrl_ads
 
-#Optional create and activate the conda environment for Intel Mac
+#Optional create and activate the conda environment only for Intel Mac
 conda env create -f environmentIntelMac.yml
 conda activate torchrl_ads_new
 
@@ -54,6 +54,10 @@ pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https
 ### 1. Core RL Training (`digital_advertising.py`)
 
 This script implements the core reinforcement learning environment and training pipeline.
+
+####  1.1 Core RL Training (`digital_advertisingIntelMac.py`)
+
+This script is almost the same as digital_advertising.py there are only minor differences in the import because Intel mac does not support the same versions
 
 **Key Features:**
 
