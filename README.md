@@ -14,6 +14,8 @@ The project consists of five main components:
 
 The the presentation can be [accessed here](<https://bernerfachhochschule-my.sharepoint.com/:p:/g/personal/chrim24_bfh_ch/Efs_Y5yBs0ZDsMDHG3fIcHABldl_-QgsJA5_nzrFd6oy8Q?e=Y76S4r>).
 
+There is an interactive notebook version available here: https://colab.research.google.com/drive/1fMeRoo2mEzBx1ct1y_jUYpT-4TrHUO8W?usp=sharing
+
 ## Link-Collection
 
 - [Analyzing Marketing Performance: Paid Search Campaign](https://medium.com/@farizalfitraaa/analyzing-marketing-performance-paid-search-campaign-6a9ed5f71c7f) ([Dataset](https://www.kaggle.com/datasets/marceaxl82/shopping-mall-paid-search-campaign-dataset))
