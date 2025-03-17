@@ -59,22 +59,23 @@
         <h1>Digital Advertising RL Optimization Analysis</h1>
     
         <div class="section">
-            <h2>Epsilon-Greedy Exploration Strategy</h2>
+            <h2>Exploration Strategy</h2>
+            <div class="description">
+                <p>These visualizations illustrate how the epsilon-greedy strategy balances exploration and exploitation during training. Initially, the agent explores more frequently to discover the environment, gradually shifting toward exploitation of known profitable keywords.</p>
+            </div>
         
             <div class="plot">
                 <img src="exploration_strategy/epsilon_greedy_exploration.png" alt="Epsilon Greedy Exploration">
                 <div class="caption">Epsilon Greedy Exploration</div>
             </div>
             
-            <div class="plot">
-                <img src="exploration_strategy/exploration_phases_analysis.png" alt="Exploration Phases Analysis">
-                <div class="caption">Exploration Phases Analysis</div>
-            </div>
-            
         </div>
         
         <div class="section">
             <h2>Reward Function Design</h2>
+            <div class="description">
+                <p>The reward function is critical for guiding the agent toward optimal policy. These plots show how the reward is computed based on ROAS, with adjustments for opportunity cost and variance reduction techniques.</p>
+            </div>
         
             <div class="plot">
                 <img src="reward_function/reward_function_analysis.png" alt="Reward Function Analysis">
@@ -89,7 +90,10 @@
         </div>
         
         <div class="section">
-            <h2>Experience Replay & Target Network</h2>
+            <h2>Stability Mechanisms</h2>
+            <div class="description">
+                <p>Experience replay and target networks are key stability mechanisms in deep RL. These diagrams illustrate how they prevent catastrophic forgetting and reduce training variance.</p>
+            </div>
         
             <div class="plot">
                 <img src="experience_replay/experience_replay_target_network.png" alt="Experience Replay Target Network">
@@ -104,30 +108,70 @@
         </div>
         
         <div class="section">
-            <h2>Budget Allocation Strategy</h2>
-        
-            <div class="plot">
-                <img src="budget_strategy/roas_vs_spend.png" alt="Roas Vs Spend">
-                <div class="caption">Roas Vs Spend</div>
+            <h2>Budget Allocation</h2>
+            <div class="description">
+                <p>These visualizations demonstrate the 10% budget allocation strategy, which balances risk management with return optimization in the advertising context.</p>
             </div>
-            
+        
             <div class="plot">
                 <img src="budget_strategy/cash_management_simulation.png" alt="Cash Management Simulation">
                 <div class="caption">Cash Management Simulation</div>
             </div>
             
-            <div class="plot">
-                <img src="budget_strategy/roas_group_analysis.png" alt="Roas Group Analysis">
-                <div class="caption">Roas Group Analysis</div>
+        </div>
+        
+        <div class="section">
+            <h2>Feature Analysis</h2>
+            <div class="description">
+                <p>The correlation matrix provides insights into relationships between different advertising metrics, helping to understand the feature space the agent operates in.</p>
             </div>
-            
+        
             <div class="plot">
-                <img src="budget_strategy/portfolio_performance.png" alt="Portfolio Performance">
-                <div class="caption">Portfolio Performance</div>
+                <img src="feature_analysis/feature_correlation_matrix.png" alt="Feature Correlation Matrix">
+                <div class="caption">Feature Correlation Matrix</div>
             </div>
             
         </div>
         
+        <div class="section">
+            <h2>Keyword Investment Analysis</h2>
+            <div class="description">
+                <p>Visualizations related to keyword investment analysis.</p>
+            </div>
+        
+            <div class="plot">
+                <img src="keyword_investment/keyword_similarity_map.png" alt="Keyword Similarity Map">
+                <div class="caption">Keyword Similarity Map</div>
+            </div>
+            
+            <div class="plot">
+                <img src="keyword_investment/keyword_investment_landscape.png" alt="Keyword Investment Landscape">
+                <div class="caption">Keyword Investment Landscape</div>
+            </div>
+            
+            <div class="plot">
+                <img src="keyword_investment/keyword_investment_quadrant.png" alt="Keyword Investment Quadrant">
+                <div class="caption">Keyword Investment Quadrant</div>
+            </div>
+            
+        </div>
+        
+    <div class="section">
+        <h2>Summary</h2>
+        <div class="description">
+            <p>The visualizations in this report demonstrate the effectiveness of reinforcement learning for digital advertising optimization. 
+            Key components include:</p>
+            <ul>
+                <li>Epsilon-greedy exploration strategy that balances exploration and exploitation</li>
+                <li>A reward function design optimized for ROAS with opportunity cost consideration</li>
+                <li>Experience replay and target networks that stabilize training</li>
+                <li>A risk-managed budget allocation strategy</li>
+                <li>Decision boundaries that incorporate both ROAS and engagement metrics</li>
+            </ul>
+            <p>Together, these components create a robust system for maximizing advertising effectiveness while managing budgets efficiently.</p>
+        </div>
+    </div>
+    
     </body>
     </html>
     

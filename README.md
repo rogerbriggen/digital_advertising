@@ -14,6 +14,8 @@ The project consists of five main components:
 
 The the presentation can be [accessed here](<https://bernerfachhochschule-my.sharepoint.com/:p:/g/personal/chrim24_bfh_ch/Efs_Y5yBs0ZDsMDHG3fIcHABldl_-QgsJA5_nzrFd6oy8Q?e=Y76S4r>).
 
+There is an interactive notebook version [available here](<https://colab.research.google.com/drive/1fMeRoo2mEzBx1ct1y_jUYpT-4TrHUO8W?usp=sharing>).
+
 ## Link-Collection
 
 - [Analyzing Marketing Performance: Paid Search Campaign](https://medium.com/@farizalfitraaa/analyzing-marketing-performance-paid-search-campaign-6a9ed5f71c7f) ([Dataset](https://www.kaggle.com/datasets/marceaxl82/shopping-mall-paid-search-campaign-dataset))
@@ -96,6 +98,14 @@ python hyperparameter_tuning.py --n_trials 100
 # Filter output to show only Optuna trial results (Optuna results are moved from St.Err to St.Out)
 python hyperparameter_tuning.py 2>&1 | grep -e 'Trial'
 ```
+**Example Output**
+```bash
+[I 2025-03-17 09:50:14,536] Trial 49 finished with value: 585.3356768722879
+and parameters: {'lr': 0.00111840817669161, 'batch_size': 256, 'exploration_eps_init': 0.8660584011442679,
+'exploration_eps_end': 0.05814255082804508, 'softupdate_eps': 0.9512686385062922, 'gamma': 0.954767916825532,
+'weight_decay': 4.720944701652184e-06}.
+Best is trial 32 with value: 808.4930485711666.
+```
 
 **See results in tensorboard**
 
@@ -105,6 +115,17 @@ cd digital_advertising
 conda activate torchrl_ads
 # Run tensorboard
 tensorboard --logdir=runs
+```
+
+**Visualize Results in Optuna Dashboard**
+```bash
+# Install Optuna Dashboard
+pip install optuna-dashboard
+
+# Run the dashboard
+optuna-dashboard sqlite:///optuna/digital_ad.db
+
+#Alternative install IDE Extension for Optuna Dashboard
 ```
 
 ### 3. Performance Visualization (`visualize_ad_performance.py`)
