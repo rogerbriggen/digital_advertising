@@ -117,6 +117,17 @@ conda activate torchrl_ads
 tensorboard --logdir=runs
 ```
 
+**Visualize Results in Optuna Dashboard**
+```bash
+# Install Optuna Dashboard
+pip install optuna-dashboard
+
+# Run the dashboard
+optuna-dashboard sqlite:///optuna/digital_ad.db
+
+#Alternative install IDE Extension for Optuna Dashboard
+```
+
 ### 3. Performance Visualization (`visualize_ad_performance.py`)
 
 Creates comprehensive HTML reports with visualizations of the model's performance.
