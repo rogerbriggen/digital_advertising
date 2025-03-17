@@ -41,6 +41,10 @@ cd digital_advertising
 conda env create -f environment.yml
 conda activate torchrl_ads
 
+#Optional create and activate the conda environment for Intel Mac
+conda env create -f environmentIntelMac.yml
+conda activate torchrl_ads_new
+
 # For CUDA support, run this additional command
 pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ```
