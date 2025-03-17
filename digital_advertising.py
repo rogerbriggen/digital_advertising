@@ -22,6 +22,9 @@ from torchrl.objectives import DQNLoss, SoftUpdate
 # Define the file path
 file_path = 'data/organized_dataset.csv'
 
+# Tensorboard vorbereiten
+writer = SummaryWriter()
+
 # Generate Realistic Synthetic Data. 
 # This is coming from Ilja's code and is left in the code for educational purposes what fields we have also in the csv file.
 # Keyword-Platzierung-Arten:
@@ -342,6 +345,7 @@ class AdOptimizationEnv(EnvBase):
         # Update the state
         self.obs = next_obs
         print(f'Step (_step): {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
+        writer.add_scalar("Reward", reward, self.current_step)
 
         # tensordict is used from EnvBase later on, so we add the current state here
         tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
@@ -801,8 +805,6 @@ def learn(params=None, train_data=None, test_data=None):
     test_env = AdOptimizationEnv(dataset_test, device=device)  # Create a test environment with the test dataset
     model_handler = ModelHandler(save_dir='saves')
  
-    # Tensorboard vorbereiten
-    writer = SummaryWriter()
     # Write the hyperparameters to tensorboard
     writer.add_text("Feature Columns", str(feature_columns))
     writer.add_text("Num Keywords", str(num_keywords))
