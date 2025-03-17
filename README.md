@@ -41,7 +41,8 @@ cd digital_advertising
 conda env create -f environment.yml
 conda activate torchrl_ads
 
-#Optional create and activate the conda environment only when you work with Intel Mac. Otherwise the upper environment can be used.
+# Optional create and activate the conda environment only when you work with Intel Mac.
+# Otherwise the upper environment can be used.
 conda env create -f environmentIntelMac.yml
 conda activate torchrl_ads_new
 
