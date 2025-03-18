@@ -12,7 +12,9 @@ The project consists of five main components:
 4. **Training Analysis (`tensorboard-analyzer.py`)** - Analyzes TensorBoard logs to provide insights into the training process
 5. **Interactive Data Explorer (`analyze_raw_data.py`)** - Provides an interactive Dash web application for exploring and visualizing the raw advertising data
 
-The the presentation can be [accessed here](<https://bernerfachhochschule-my.sharepoint.com/:p:/g/personal/chrim24_bfh_ch/Efs_Y5yBs0ZDsMDHG3fIcHABldl_-QgsJA5_nzrFd6oy8Q?e=Y76S4r>).
+The the presentation can be [accessed here](<https://bernerfachhochschule-my.sharepoint.com/:p:/g/personal/chrim24_bfh_ch/Efs_Y5yBs0ZDsMDHG3fIcHABldl_-QgsJA5_nzrFd6oy8Q?e=Y76S4r>) or from the repository `DigitalAdvertising_Aufgabe_17.pptx`.
+
+There is an interactive notebook version [available here](<https://colab.research.google.com/drive/1fMeRoo2mEzBx1ct1y_jUYpT-4TrHUO8W?usp=sharing>).
 
 ## Link-Collection
 
@@ -39,6 +41,11 @@ cd digital_advertising
 conda env create -f environment.yml
 conda activate torchrl_ads
 
+# Optional create and activate the conda environment only when you work with Intel Mac.
+# Otherwise the upper environment can be used.
+conda env create -f environmentIntelMac.yml
+conda activate torchrl_ads_new
+
 # For CUDA support, run this additional command
 pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ```
@@ -48,6 +55,10 @@ pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https
 ### 1. Core RL Training (`digital_advertising.py`)
 
 This script implements the core reinforcement learning environment and training pipeline.
+
+####  1.1 Core RL Training (`digital_advertisingIntelMac.py`)
+
+This script is almost the same as digital_advertising.py there are only minor differences in the import because Intel mac does not support the same versions.
 
 **Key Features:**
 
@@ -113,6 +124,17 @@ cd digital_advertising
 conda activate torchrl_ads
 # Run tensorboard
 tensorboard --logdir=runs
+```
+
+**Visualize Results in Optuna Dashboard**
+```bash
+# Install Optuna Dashboard
+pip install optuna-dashboard
+
+# Run the dashboard
+optuna-dashboard sqlite:///optuna/digital_ad.db
+
+#Alternative install IDE Extension for Optuna Dashboard
 ```
 
 ### 3. Performance Visualization (`visualize_ad_performance.py`)

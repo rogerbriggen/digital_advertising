@@ -52,7 +52,7 @@ def main():
     dataset = generate_synthetic_data(1000)
     
     # Create Optuna study
-    study = optuna.create_study(direction="maximize")
+    study = optuna.create_study(direction="maximize", storage="sqlite:///optuna/digital_ad1.db")
     
     print(f"Starting optimization with {args.n_trials} trials...")
     study.optimize(lambda trial: objective(trial, dataset), n_trials=args.n_trials)
