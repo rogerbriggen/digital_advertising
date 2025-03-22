@@ -294,7 +294,7 @@ class AdOptimizationEnv(EnvBase):
         9. Updates the tensor dictionary with the new state, reward, and termination status.
         10. Returns the updated tensor dictionary containing the next state, reward, and termination status.
         """
-        # Get the action from the input tensor dictionary. 
+        # Get the action from the input tensor dictionary.
         action = tensordict["action"]
         true_indices = torch.nonzero(action, as_tuple=True)[0]
         action_idx = true_indices[0] if len(true_indices) > 0 else self.action_spec.n - 1
@@ -328,7 +328,9 @@ class AdOptimizationEnv(EnvBase):
 
          # Move to the next time step.
         self.current_step += 1
-        terminated = self.cash < 0 or self.current_step >= (len(self.dataset) // self.num_keywords) - 2 # -2 to avoid going over the last index
+        terminated = self.cash < 0 or self.current_step >= (len(self.dataset) // self.num_keywords) - 1 # -1 to avoid going over the last index
+        if (terminated):
+            print(f'Episode terminated at step {self.current_step}')
         truncated = False
 
         # Get next pki for the keywords
@@ -344,16 +346,13 @@ class AdOptimizationEnv(EnvBase):
         
         # Update the state
         self.obs = next_obs
-        print(f'Step (_step): {self.current_step}, Action: {action_idx}, Reward: {reward}, Cash: {self.cash}')
+        print(f'Step (_step): {self.current_step - 1}, Action: {action_idx}, Reward: {torch.tensor(reward, dtype=torch.float32)}, Cash: {self.cash}')
         writer.add_scalar("Reward", reward, self.current_step)
 
         # tensordict is used from EnvBase later on, so we add the current state here
-        tensordict["done"] = torch.as_tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device)
-        tensordict["observation"] = self.obs
-        tensordict["reward"] = torch.tensor(reward, dtype=torch.float32, device=self.device)
+        # Step_count is otherwise removed from our tensordict, since it is nowhere in the spec... we could add it to the wrapper or the observation spec but we use a third way to do it
         tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device)
-        tensordict["terminated"] = torch.tensor(bool(terminated), dtype=torch.bool, device=self.device)
-        tensordict["truncated"] = torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
+        
         # next as return value is also used by EnvBase and later added to tensordict by EnvBase
         next = TensorDict({
             "done": torch.tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device),
@@ -678,9 +677,9 @@ def run_inference(model_path, dataset_test, device, feature_columns):
         with torch.no_grad():
             test_td = inference_policy(test_td)
         test_td = test_env.step(test_td)
-        reward = test_td["reward"].item()
+        reward = test_td["next", "reward"].item()
         total_reward += reward
-        done = test_td["done"].item()
+        done = test_td["next", "done"].item()
         
         print(f"Step (run_inference ): {test_td['step_count'].item()}, Action: {test_td['action'].argmax().item()}, Reward: {reward}")
     
@@ -870,7 +869,7 @@ def learn(params=None, train_data=None, test_data=None):
 
                         # Step in the test environment
                         test_td = test_env.step(test_td)
-                        reward = test_td["reward"].item()
+                        reward = test_td["next", "reward"].item()
                         total_test_reward += reward
                         done = test_td["done"].item()
                         test_step += 1
