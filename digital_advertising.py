@@ -642,7 +642,46 @@ def create_policy(env, feature_dim, num_keywords, device):
 
 def run_inference(model_path, dataset_test, device, feature_columns):
     """
-    Run inference using a saved model
+    Run inference using a saved model. This uses the rollout method for evaluation.
+    
+    Args:
+        model_path: Path to the saved model
+        dataset_test: Test dataset 
+        device: Device to run on
+        feature_columns: List of feature column names
+    """
+    # Create test environment
+    test_env = AdOptimizationEnv(dataset_test, device=device)
+    
+    # Get dimensions
+    feature_dim = len(feature_columns)
+    num_keywords = test_env.num_keywords
+    
+    # Create a fresh policy with the same architecture
+    inference_policy = create_policy(test_env, feature_dim, num_keywords, device)
+    
+    # Load the saved model handler
+    model_handler = ModelHandler()
+    inference_policy, metadata = model_handler.load_model(
+        policy=inference_policy,
+        filepath=model_path,
+        device=device,
+        inference_only=True
+    )
+    
+    # Run inference
+    trajectory = test_env.rollout(policy=inference_policy, max_steps=10_000) # 10_000 steps is more than we have... done should finish it
+    total_reward = trajectory["next", "reward"].sum().item()
+    
+    print(f"Inference trajectory: {trajectory}")
+
+    print(f"Total inference reward: {total_reward}")
+    return total_reward, inference_policy
+
+
+def run_inference2(model_path, dataset_test, device, feature_columns):
+    """
+    Run inference using a saved model. This uses a hand-crafted loop instead of the rollout method.
     
     Args:
         model_path: Path to the saved model
