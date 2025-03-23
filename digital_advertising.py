@@ -18,6 +18,7 @@ from torchrl.data import OneHot, Bounded, Unbounded, Binary, Composite
 from torchrl.envs import EnvBase
 from torchrl.modules import EGreedyModule, MLP, QValueModule
 from torchrl.objectives import DQNLoss, SoftUpdate
+from torchrl.envs.utils import check_env_specs
 
 # Define the file path
 file_path = 'data/organized_dataset.csv'
@@ -200,10 +201,10 @@ class AdOptimizationEnv(EnvBase):
         self.observation_spec = Composite(
             observation = Composite(
                 keyword_features=Unbounded(shape=(self.num_keywords, self.num_features), dtype=torch.float32),
-                cash=Unbounded(shape=(1,), dtype=torch.float32),
+                cash=Unbounded(shape=(), dtype=torch.float32),
                 holdings=Bounded(low=0, high=1, shape=(self.num_keywords,), dtype=torch.int, domain="discrete")
             ),
-            step_count=Unbounded(shape=(1,), dtype=torch.int64)
+            step_count=Unbounded(shape=(), dtype=torch.int64)
         )
         self.done_spec = Composite(
             done=Binary(shape=(1,), dtype=torch.bool),
@@ -247,11 +248,11 @@ class AdOptimizationEnv(EnvBase):
         # Create the initial observation.
         keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
         keyword_features = (keyword_features - self.feature_means) / self.feature_stds
-        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32, device=self.device) - self.cash_mean) / self.cash_std
+        cash_normalized = torch.tensor((self.cash - self.cash_mean) / self.cash_std, dtype=torch.float32, device=self.device) 
 
         obs = TensorDict({
             "keyword_features": keyword_features,  # Current pki for each keyword
-            "cash": cash_normalized,  # Current cash balance
+            "cash": cash_normalized.clone().detach(),  # Current cash balance
             "holdings": self.holdings.clone()  # 1 for each keyword if we are holding
         }, batch_size=[])
 
@@ -263,7 +264,7 @@ class AdOptimizationEnv(EnvBase):
         tensordict = tensordict.update({
             "done": torch.tensor(False, dtype=torch.bool, device=self.device),
             "observation": obs,
-            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
+            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device).clone().detach(),
             "terminated": torch.tensor(False, dtype=torch.bool, device=self.device),
             "truncated": torch.tensor(False, dtype=torch.bool, device=self.device)
         })
@@ -336,7 +337,7 @@ class AdOptimizationEnv(EnvBase):
         # Get next pki for the keywords
         next_keyword_features = torch.tensor(get_entry_from_dataset(self.dataset, self.current_step)[feature_columns].values, dtype=torch.float32, device=self.device)
         next_keyword_features = (next_keyword_features - self.feature_means) / self.feature_stds
-        cash_normalized = (torch.tensor(self.cash, dtype=torch.float32, device=self.device) - self.cash_mean) / self.cash_std
+        cash_normalized = torch.tensor((self.cash - self.cash_mean) / self.cash_std, dtype=torch.float32, device=self.device)
 
         next_obs = TensorDict({
             "keyword_features": next_keyword_features,  # next pki for each keyword
@@ -351,14 +352,14 @@ class AdOptimizationEnv(EnvBase):
 
         # tensordict is used from EnvBase later on, so we add the current state here
         # Step_count is otherwise removed from our tensordict, since it is nowhere in the spec... we could add it to the wrapper or the observation spec but we use a third way to do it
-        tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device)
+        tensordict["step_count"] = torch.tensor(self.current_step-1, dtype=torch.int64, device=self.device).clone().detach()
         
         # next as return value is also used by EnvBase and later added to tensordict by EnvBase
         next = TensorDict({
             "done": torch.tensor(bool(terminated or truncated), dtype=torch.bool, device=self.device),
             "observation": next_obs,
             "reward": torch.tensor(reward, dtype=torch.float32, device=self.device),
-            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device),
+            "step_count": torch.tensor(self.current_step, dtype=torch.int64, device=self.device).clone().detach(),
             "terminated": torch.tensor(bool(terminated), dtype=torch.bool, device=self.device),
             "truncated": torch.tensor(bool(truncated), dtype=torch.bool, device=self.device)
         }, batch_size=tensordict.batch_size)
@@ -747,6 +748,8 @@ def learn(params=None, train_data=None, test_data=None):
 
     # Initialize Environment
     env = AdOptimizationEnv(dataset_training, device=device)
+    # Check environment specifications
+    check_env_specs(env)
     
     # Define data and dimensions
     feature_dim = len(feature_columns)
