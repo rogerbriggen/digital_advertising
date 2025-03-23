@@ -12,7 +12,7 @@ The project consists of five main components:
 4. **Training Analysis (`tensorboard-analyzer.py`)** - Analyzes TensorBoard logs to provide insights into the training process
 5. **Interactive Data Explorer (`analyze_raw_data.py`)** - Provides an interactive Dash web application for exploring and visualizing the raw advertising data
 
-The the presentation can be [accessed here](<https://bernerfachhochschule-my.sharepoint.com/:p:/g/personal/chrim24_bfh_ch/Efs_Y5yBs0ZDsMDHG3fIcHABldl_-QgsJA5_nzrFd6oy8Q?e=Y76S4r>) or from the repository `DigitalAdvertising_Aufgabe_17.pptx`.
+The presentation can be accessed from the repository DigitalAdvertising_Aufgabe_17 [PPTX](https://github.com/mac-christ/digital_advertising/blob/main/DigitalAdvertising_Aufgabe_17.pptx) / [PDF](https://github.com/mac-christ/digital_advertising/blob/main/DigitalAdvertising_Aufgabe_17_Gruppe_2.pdf).
 
 There is an interactive notebook version [available here](<https://colab.research.google.com/drive/1fMeRoo2mEzBx1ct1y_jUYpT-4TrHUO8W?usp=sharing>).
 
